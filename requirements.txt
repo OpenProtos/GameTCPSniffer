@@ -1,0 +1,7 @@
+attrs
+scapy
+argparse
+aiosqlite
+aiofiles
+types-aiofiles
+mypy

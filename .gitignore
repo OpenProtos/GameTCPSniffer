@@ -1,0 +1,16 @@
+# Database files
+
+*.db
+
+# venv
+
+venv/
+.venv/
+
+# mypy_cache
+
+.mypy_cache/
+
+# python_cache
+
+*/__pycache__/
