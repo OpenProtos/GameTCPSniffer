@@ -1,6 +1,6 @@
 # Copyright (C) 2025 Rémy Cases
 # See LICENSE file for extended copyright information.
-# This file is part of MyDeputeFr project from https://github.com/remyCases/MyDeputeFr.
+# This file is part of GameTCPSniffer project from https://github.com/remyCases/GameTCPSniffer.
 
 from __future__ import annotations
 
@@ -179,11 +179,11 @@ class PacketSequenceHandler:
         return current_time - cs.last_message_time > cs.timeout_handler
 
 def get_packet_sequence_worker(
-        queue_msg: queue.Queue[Message], 
-        queue_com: asyncio.Queue[Communication], 
-        max_client_messages_stored: int, 
-        timeout: float,
-        display: bool
+    queue_msg: queue.Queue[Message], 
+    queue_com: asyncio.Queue[Communication], 
+    max_client_messages_stored: int, 
+    timeout: float,
+    display: bool
 ) -> Callable[[], Coroutine[None, None, None]]:
 
     cs = PacketSequenceState(
@@ -198,7 +198,6 @@ def get_packet_sequence_worker(
     display_request = get_tcp_display(display)
 
     async def packet_sequence_worker() -> None:
-        nonlocal queue_msg
         nonlocal cs
 
         while True:

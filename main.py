@@ -1,6 +1,6 @@
 # Copyright (C) 2025 Rémy Cases
 # See LICENSE file for extended copyright information.
-# This file is part of MyDeputeFr project from https://github.com/remyCases/MyDeputeFr.
+# This file is part of GameTCPSniffer project from https://github.com/remyCases/GameTCPSniffer.
 
 import asyncio
 from pathlib import Path
@@ -13,6 +13,7 @@ from scapy.all import sniff, Packet
 import argparse
 
 from src.database import get_database_worker
+from src.decoder import get_decoder
 from src.servers import generate_packet_handler, get_game_servers
 from src.state_machine import get_packet_sequence_worker
 from src.utils import Communication, GameProtocolConfig, Message
@@ -28,10 +29,11 @@ async def main(ip_servs: List[str], cfg: GameProtocolConfig) -> None:
     cancel_event = threading.Event()
     # queue for communication between tasks
     queue_msg = queue.Queue[Message](maxsize=100)
+    queue_msg_decoder = queue.Queue[Message](maxsize=100)
     queue_com = asyncio.Queue[Communication](maxsize=100)
 
     # sniffer thread
-    packet_handler = generate_packet_handler(queue_msg, cfg.display)
+    packet_handler = generate_packet_handler(queue_msg, queue_msg_decoder)
 
     def custom_prn(pkt: Packet) -> None:
         return packet_handler(pkt, ip_servs, cfg.ack_packet_size)
@@ -58,20 +60,28 @@ async def main(ip_servs: List[str], cfg: GameProtocolConfig) -> None:
     )
     ps_task = asyncio.create_task(ps_worker())
 
-    print("PacketSequenceHandler worker started. Start packet capture now...")
+    print("PacketSequenceHandler worker started")
+
+    # decoder task
+    de_worker = get_decoder(queue_msg_decoder, cfg.magic_bytes, cfg.display)
+    de_task = asyncio.create_task(de_worker(cfg.proto_path, cfg.proto, cfg.verbose))
+
+    print("Decoder worker started")
 
     # database task
     db_connection = await aiosqlite.connect(cfg.database_path)
     db_worker = get_database_worker(queue_com)
     db_task = asyncio.create_task(db_worker(db_connection))
 
-    print("Database worker started. Start packet capture now...")
+    print("Database worker started")
 
     tasks = [
         ps_task,
+        de_task,
         db_task,
     ]
     try:
+        print("Start packet capture now...\n")
         await asyncio.gather(sn_task, *tasks, return_exceptions=True)
     except asyncio.CancelledError:
         print("Shutting down...")
@@ -101,8 +111,20 @@ def create_config_from_args() -> GameProtocolConfig:
     parser.add_argument(
         '-f', '--filter', 
         type=int,
-        default=6,
-        help="ACK packet size to filter (-1 for no filtering, default: 6)"
+        default=-1,
+        help="ACK packet size to filter (-1 for no filtering, default: -1)"
+    )
+    parser.add_argument(
+        '-pr', '--proto', 
+        type=str,
+        default="",
+        help="Proto packet to filter ("" will discard all packets, default: "")"
+    )
+    parser.add_argument(
+        '-mg', '--magic-bytes', 
+        type=str,
+        default="",
+        help="TODO"
     )
     parser.add_argument(
         '--db-path',
@@ -115,19 +137,40 @@ def create_config_from_args() -> GameProtocolConfig:
         help="Sql schema file path (default: database/schema.sql)"
     )
     parser.add_argument(
+        '--proto-path',
+        default="proto",
+        help="Protobuf folder path (default: proto)"
+    )
+    parser.add_argument(
         '-d', '--display', 
         action='store_true', 
         default=False,
         help="Display packet on the terminal (default: False)"
     )
+    parser.add_argument(
+        '-v', '--verbose', 
+        action='store_true', 
+        default=False,
+        help="Display all protobuf messages found (default: False)"
+    )
     args = parser.parse_args()
+
+    magic_bytes_str = args.magic_bytes
+    if magic_bytes_str.startswith('\\x'): # escaped hex case, with \x prefix
+        magic_bytes = magic_bytes_str.encode().decode('unicode_escape').encode('latin1')
+    else:  # raw hex case, no prefix
+        magic_bytes = bytes.fromhex(magic_bytes_str)
 
     return GameProtocolConfig(
         target_ports=args.ports,
         ack_packet_size=args.filter,
+        proto=args.proto,
+        magic_bytes=magic_bytes,
         database_path=Path(args.db_path),
         schema_path=Path(args.sc_path),
-        display=args.display
+        proto_path=Path(args.proto_path),
+        display=args.display,
+        verbose=args.verbose,
     )
 
 
@@ -135,8 +178,10 @@ if __name__ == "__main__":
 
     config = create_config_from_args()
 
-    print(f"Monitoring ports: {config.target_ports}")
-    print(f"ACK filter size: {config.ack_packet_size}")
+    print(f"{'Monitoring ports':<35}: {config.target_ports}")
+    print(f"{'ACK filter size':<35}: {config.ack_packet_size}")
+    print(f"{'Capturing proto':<35}: {config.proto}")
+    print(f"{'Magic bytes used to decode protos':<35}: {config.magic_bytes}")
     print("Getting servers...")
     servs = get_game_servers(config.target_ports)
     if not servs:

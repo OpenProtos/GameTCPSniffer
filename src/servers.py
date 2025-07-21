@@ -1,6 +1,6 @@
 # Copyright (C) 2025 Rémy Cases
 # See LICENSE file for extended copyright information.
-# This file is part of MyDeputeFr project from https://github.com/remyCases/MyDeputeFr.
+# This file is part of GameTCPSniffer project from https://github.com/remyCases/GameTCPSniffer.
 
 import asyncio
 import queue
@@ -11,7 +11,7 @@ from typing import Callable, List, Tuple
 from scapy.all import Packet
 from scapy.layers.inet import IP, TCP
 
-from src.utils import DEFAULT_COLOR, CommunicationFlag, Message, get_tcp_display, is_client
+from src.utils import CommunicationFlag, Message, is_client
 
 
 def get_game_servers(ports: List[int]) -> List[Tuple[str, int]]:
@@ -54,9 +54,10 @@ def get_game_servers(ports: List[int]) -> List[Tuple[str, int]]:
         print(f"Error scanning netstat: {e}")
         return []
 
-def generate_packet_handler(db_queue: queue.Queue[Message], display: bool) -> Callable[[Packet, List[str], int], None]:
-
-    display_request = get_tcp_display(display)
+def generate_packet_handler(
+    db_queue_for_statemachine: queue.Queue[Message], 
+    db_queue_for_decoder: queue.Queue[Message]
+) -> Callable[[Packet, List[str], int], None]:
 
     def packet_handler(pkt: Packet, servers: List[str], filter_payload_len: int) -> None:
         """
@@ -67,7 +68,6 @@ def generate_packet_handler(db_queue: queue.Queue[Message], display: bool) -> Ca
             servers: List of server IPs to monitor
             filter_payload_len: Expected ACK packet size (-1 for no filtering)
         """
-        nonlocal db_queue
 
         if pkt.haslayer(TCP) and pkt.haslayer(IP):
             src_ip = pkt[IP].src
@@ -77,7 +77,11 @@ def generate_packet_handler(db_queue: queue.Queue[Message], display: bool) -> Ca
                 payload = bytes(pkt[TCP].payload)
 
                 if filter_payload_len == -1: # no filtering, display everything
-                    display_request(src_ip, dst_ip, pkt, DEFAULT_COLOR)
+                    msg = Message(src_ip, dst_ip, pkt, CommunicationFlag.OTHER)
+                    try:
+                        db_queue_for_decoder.put_nowait(msg)
+                    except asyncio.QueueFull:
+                        print("Database queue full !")
                     return
 
                 if filter_payload_len > 0 and len(payload) == filter_payload_len and not is_client(src_ip):
@@ -88,7 +92,7 @@ def generate_packet_handler(db_queue: queue.Queue[Message], display: bool) -> Ca
  
                 # Non-blocking queue put
                 try:
-                    db_queue.put_nowait(msg)
+                    db_queue_for_statemachine.put_nowait(msg)
                 except asyncio.QueueFull:
                     print("Database queue full !")
 

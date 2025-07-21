@@ -1,6 +1,6 @@
 # Copyright (C) 2025 Rémy Cases
 # See LICENSE file for extended copyright information.
-# This file is part of MyDeputeFr project from https://github.com/remyCases/MyDeputeFr.
+# This file is part of GameTCPSniffer project from https://github.com/remyCases/GameTCPSniffer.
 
 import asyncio
 from typing import Coroutine, Callable
@@ -8,10 +8,13 @@ import aiosqlite
 
 from src.utils import Communication
 
-def get_database_worker(queue: asyncio.Queue[Communication]) -> Callable[[aiosqlite.Connection], Coroutine[None, None, None]]:
+def get_database_worker(
+    queue: asyncio.Queue[Communication]
+) -> Callable[[aiosqlite.Connection], Coroutine[None, None, None]]:
+
     async def database_worker(db_connection: aiosqlite.Connection) -> None:
         """Simple worker that processes database insertions"""
-        nonlocal queue
+
         while True:
             # Wait for communication data
             comm = await queue.get()

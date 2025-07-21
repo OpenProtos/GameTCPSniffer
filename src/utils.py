@@ -1,6 +1,6 @@
 # Copyright (C) 2025 Rémy Cases
 # See LICENSE file for extended copyright information.
-# This file is part of MyDeputeFr project from https://github.com/remyCases/MyDeputeFr.
+# This file is part of GameTCPSniffer project from https://github.com/remyCases/GameTCPSniffer.
 
 from __future__ import annotations
 
@@ -26,6 +26,17 @@ start = time.time()
 class CommunicationFlag(Enum):
     ACK = "ack"
     OTHER = "other"
+
+@define
+class ByteArrayRepr:
+    values: bytes
+
+    @classmethod
+    def from_bytes(cls, arr: bytes) -> ByteArrayRepr:
+        return cls(arr)
+    
+    def to_hex(self) -> str:
+        return f"0x{self.values.hex()}"
 
 @define
 class Message:
@@ -59,9 +70,13 @@ class Communication:
 class GameProtocolConfig:
     target_ports: List[int]
     ack_packet_size: int
+    proto: str
+    magic_bytes: bytes
     database_path: Path
     schema_path: Path
+    proto_path: Path
     display: bool
+    verbose: bool
 
 def decode_tcp_paylod(pkt: Packet) -> str:
     return binascii.hexlify(bytes(pkt[TCP].payload)).decode()
@@ -74,10 +89,10 @@ def get_tcp_display(display: bool) -> Callable[[str, str, Packet, str], None]:
         """Print a tcp request with color coding."""
         payload = bytes(pkt[TCP].payload)
         elapsed = (time.time() - start)
-        print(f"{color}From\t: {src_ip}:{pkt[TCP].sport} -> {dst_ip}:{pkt[TCP].dport}{COLOR_END}")
-        print(f"{color}TS\t: {str(timedelta(seconds=elapsed))}{COLOR_END}")
-        print(f"{color}Size\t: {len(payload)} bytes{COLOR_END}")
-        print(f"{color}Hex\t: {binascii.hexlify(payload)[:100]!r}...{COLOR_END}")  # First 50 bytes
+        print(f"{color}From\t\t: {src_ip}:{pkt[TCP].sport} -> {dst_ip}:{pkt[TCP].dport}{COLOR_END}")
+        print(f"{color}TS\t\t: {str(timedelta(seconds=elapsed))}{COLOR_END}")
+        print(f"{color}Size\t\t: {len(payload)} bytes{COLOR_END}")
+        print(f"{color}Hex\t\t: {binascii.hexlify(payload)[:100]!r}...{COLOR_END}")  # First 50 bytes
         print("---")
 
     if display:
