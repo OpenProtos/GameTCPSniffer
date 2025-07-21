@@ -16,24 +16,26 @@ from src.database import get_database_worker
 from src.decoder import get_decoder
 from src.servers import generate_packet_handler, get_game_servers
 from src.state_machine import get_packet_sequence_worker
-from src.utils import Communication, GameProtocolConfig, Message
+from src.utils import Communication, GameProtocolConfig, Message, TCP_Message
 
 
 async def main(ip_servs: List[str], cfg: GameProtocolConfig) -> None:
 
-    async with aiosqlite.connect(cfg.database_path) as db:
+    async with aiosqlite.connect(cfg.database_path / "tcp.db") as db:
         async with aiofiles.open(cfg.schema_path, encoding="utf-8") as file:
             await db.executescript(await file.read())
         await db.commit()
 
     cancel_event = threading.Event()
     # queue for communication between tasks
-    queue_msg = queue.Queue[Message](maxsize=100)
+    queue_msg_statemachine = queue.Queue[Message](maxsize=100)
+    queue_com_statemachine = asyncio.Queue[Communication](maxsize=100)
+
     queue_msg_decoder = queue.Queue[Message](maxsize=100)
-    queue_com = asyncio.Queue[Communication](maxsize=100)
+    queue_com_decoder = asyncio.Queue[TCP_Message](maxsize=100)
 
     # sniffer thread
-    packet_handler = generate_packet_handler(queue_msg, queue_msg_decoder)
+    packet_handler = generate_packet_handler(queue_msg_statemachine, queue_msg_decoder)
 
     def custom_prn(pkt: Packet) -> None:
         return packet_handler(pkt, ip_servs, cfg.ack_packet_size)
@@ -49,11 +51,11 @@ async def main(ip_servs: List[str], cfg: GameProtocolConfig) -> None:
             stop_filter=custom_stop_filter
         )
     )
-    
+
     # state machine task
     ps_worker = get_packet_sequence_worker(
-        queue_msg, 
-        queue_com, 
+        queue_msg_statemachine, 
+        queue_com_statemachine, 
         max_client_messages_stored=5, 
         timeout=10, 
         display=cfg.display
@@ -63,14 +65,14 @@ async def main(ip_servs: List[str], cfg: GameProtocolConfig) -> None:
     print("PacketSequenceHandler worker started")
 
     # decoder task
-    de_worker = get_decoder(queue_msg_decoder, cfg.magic_bytes, cfg.display)
+    de_worker = get_decoder(queue_msg_decoder, queue_com_decoder, cfg.magic_bytes, cfg.display)
     de_task = asyncio.create_task(de_worker(cfg.proto_path, cfg.proto, cfg.verbose))
 
     print("Decoder worker started")
 
     # database task
-    db_connection = await aiosqlite.connect(cfg.database_path)
-    db_worker = get_database_worker(queue_com)
+    db_connection = await aiosqlite.connect(cfg.database_path / "tcp.db")
+    db_worker = get_database_worker(queue_com_decoder)
     db_task = asyncio.create_task(db_worker(db_connection))
 
     print("Database worker started")
@@ -128,8 +130,8 @@ def create_config_from_args() -> GameProtocolConfig:
     )
     parser.add_argument(
         '--db-path',
-        default="database/tcp.db",
-        help="Database file path (default: database/tcp.db)"
+        default="database",
+        help="Database path (default: database)"
     )
     parser.add_argument(
         '--sc-path',
@@ -155,6 +157,13 @@ def create_config_from_args() -> GameProtocolConfig:
     )
     args = parser.parse_args()
 
+    # check proto files
+    if not Path(args.proto_path).exists():
+        raise ValueError(f"Cannot find the proto folder {args.proto_path}, did you correctly export all proto files ?")
+    if not (Path(args.proto_path) / f"{args.proto}.proto").exists():
+        raise ValueError(f"Cannot find the proto file {args.proto}.proto in folder {args.proto_path}.")
+
+    # compute magic_bytes
     magic_bytes_str = args.magic_bytes
     if magic_bytes_str.startswith('\\x'): # escaped hex case, with \x prefix
         magic_bytes = magic_bytes_str.encode().decode('unicode_escape').encode('latin1')
@@ -181,7 +190,7 @@ if __name__ == "__main__":
     print(f"{'Monitoring ports':<35}: {config.target_ports}")
     print(f"{'ACK filter size':<35}: {config.ack_packet_size}")
     print(f"{'Capturing proto':<35}: {config.proto}")
-    print(f"{'Magic bytes used to decode protos':<35}: {config.magic_bytes}")
+    print(f"{'Magic bytes used to decode protos':<35}: {config.magic_bytes!r}")
     print("Getting servers...")
     servs = get_game_servers(config.target_ports)
     if not servs:

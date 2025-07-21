@@ -5,14 +5,20 @@ ifeq ($(OS),Windows_NT)
   PIP=$(BIN)\pip
   PYTEST=$(BIN)\pytest
   MYPY=$(BIN)\mypy
-  VENV_PYTHON = $(BIN)\$(PYTHON)
+  VENV_PYTHON=$(BIN)\$(PYTHON)
+  WHERE=where
+  NULL_DEVICE=nul
+  PROTOBUF_INSTALLATION=winget install protobuf
 else
   VENV=venv
   BIN=$(VENV)/bin
   PIP=$(BIN)/pip
   PYTEST=$(BIN)/pytest
   MYPY=$(BIN)/mypy
-  VENV_PYTHON = $(BIN)/$(PYTHON)
+  VENV_PYTHON=$(BIN)/$(PYTHON)
+  WHERE=which
+  NULL_DEVICE=/dev/null
+  PROTOBUF_INSTALLATION=sudo apt-get update && sudo apt-get install -y protobuf-compiler
 endif
 
 # install
@@ -22,6 +28,7 @@ install_venv:
 
 install: install_venv
 	$(PIP) install --upgrade -r ./requirements.txt
+	@$(WHERE) protoc >$(NULL_DEVICE) 2>&1 && echo "Protobuf already installed" || (echo "Installing protobuf..." && $(PROTOBUF_INSTALLATION) && echo "Protobuf installation complete")
 
 run:
 	$(VENV_PYTHON) main.py $(VAR)
@@ -39,3 +46,6 @@ check: test mypy
 
 debug:
 	$(VENV_PYTHON) -m pdb main.py $(VAR)
+
+protoc:
+	where /q pioupiou && echo File exist

@@ -5,4 +5,5 @@ aiosqlite
 aiofiles
 types-aiofiles
 mypy
-protobuf
+protobuf>=6.31
+types-protobuf

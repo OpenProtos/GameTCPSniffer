@@ -9,12 +9,13 @@ import queue
 import re
 import subprocess
 from types import ModuleType
-from typing import Callable, Coroutine
+from typing import Callable, Coroutine, Tuple
 
 from scapy.layers.inet import TCP
 from google.protobuf.any_pb2 import Any
+from google.protobuf.json_format import MessageToJson
 
-from src.utils import CLIENT_COLOR, COLOR_END, DEFAULT_COLOR, ByteArrayRepr, Message, get_tcp_display
+from src.utils import CLIENT_COLOR, COLOR_END, DEFAULT_COLOR, ByteArrayRepr, Message, TCP_Message, get_tcp_display
 
 def compile_proto(proto_path: Path, proto_name: str) -> None:
     try:
@@ -57,7 +58,7 @@ def import_proto(proto_path: Path, proto_name: str) -> ModuleType:
             raise
 
 
-def parse_varints_from_hex(bytes_msg: bytes):
+def parse_varints_from_hex(bytes_msg: bytes) -> Tuple[int, int, ByteArrayRepr]:
     """
     Parse a varint from a hexadecimal string.
     Returns a (varint_value, bytes_consumed, varint_bytes) tuple.
@@ -85,11 +86,16 @@ def parse_varints_from_hex(bytes_msg: bytes):
     
     return result, bytes_consumed, ByteArrayRepr.from_bytes(bytes_msg[start_pos:position])
 
-def get_decoder(queue_msg: queue.Queue[Message], magic_bytes: bytes, display: bool) -> Callable[[Path, str, bool], Coroutine[None, None, None]]:
+def get_decoder(
+    queue_msg: queue.Queue[Message],
+    queue_com: asyncio.Queue[TCP_Message],
+    magic_bytes: bytes,
+    display: bool
+) -> Callable[[Path, str, bool], Coroutine[None, None, None]]:
 
     display_tcp = get_tcp_display(display)
 
-    async def decoder(proto_path: Path, proto_filter: str, verbose: bool):
+    async def decoder(proto_path: Path, proto_filter: str, verbose: bool) -> None:
         while True:
             try:
                 # Convert blocking get to async
@@ -112,22 +118,33 @@ def get_decoder(queue_msg: queue.Queue[Message], magic_bytes: bytes, display: bo
                     print(f"{CLIENT_COLOR}Proto\t\t: {any_msg.type_url}{COLOR_END}")
 
                 if proto_filter != "" and proto_filter in any_msg.type_url:
-                    
+
                     display_tcp(*msg.unpack(), DEFAULT_COLOR)
-                    print(f"{CLIENT_COLOR}Varint\t\t: {varint_bytes.to_hex()}{COLOR_END}")
-                    print(f"{CLIENT_COLOR}Value\t\t: {value_varint}{COLOR_END}")
-                    print(f"{CLIENT_COLOR}VarLen\t\t: {bytes_consumed}{COLOR_END}")
-                    
+                    print(f"{DEFAULT_COLOR}Varint\t\t: {varint_bytes.to_hex()}{COLOR_END}")
+                    print(f"{DEFAULT_COLOR}Value\t\t: {value_varint}{COLOR_END}")
+                    print(f"{DEFAULT_COLOR}VarLen\t\t: {bytes_consumed}{COLOR_END}")
+
                     print("---")
                     print("Decoding...")
                     proto_module = import_proto(proto_path, proto_filter)
                     proto_class = getattr(proto_module, proto_filter)
-                    msg = proto_class()
-                    msg.ParseFromString(any_msg.value)
+                    proto_msg = proto_class()
+                    proto_msg.ParseFromString(any_msg.value)
                     print("---")
-                    print(msg)
+                    print(proto_msg)
+
+                    tcp_msg = TCP_Message(
+                        client_ip=f"{msg.dst_ip}:{msg.pkt[TCP].sport}",
+                        server_ip=f"{msg.src_ip}:{msg.pkt[TCP].dport}",
+                        proto=proto_filter,
+                        size=value_varint + bytes_consumed,
+                        nb_packet=1,
+                        data=MessageToJson(proto_msg)
+                    )
                     print("-------")
-                
+
+                    await queue_com.put(tcp_msg)
+
                 queue_msg.task_done()
 
             except queue.Empty:

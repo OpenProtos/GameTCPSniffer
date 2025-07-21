@@ -9,7 +9,7 @@ from datetime import timedelta
 from enum import Enum
 from pathlib import Path
 import time
-from typing import Callable, List, Tuple
+from typing import Callable, List, Tuple, TypeAlias
 
 from attr import define
 from scapy.all import Packet
@@ -58,6 +58,21 @@ class Message:
             flag=CommunicationFlag.OTHER,
         )
 
+
+JSON: TypeAlias = dict[str, "JSON"] | list["JSON"] | str | int | float | bool | None
+@define
+class TCP_Message:
+    client_ip: str
+    server_ip: str
+    proto: str
+    size: int
+    nb_packet: int
+    data: JSON
+
+    def unpack(self) -> Tuple[str, str, str, int, int, JSON]:
+        return self.client_ip, self.server_ip, self.proto, self.size, self.nb_packet, self.data
+
+
 @define
 class Communication:
     client_ip: str
@@ -65,6 +80,9 @@ class Communication:
     request: str
     ack: str
     response: str
+
+    def unpack(self) -> Tuple[str, str, str, str, str]:
+        return self.client_ip, self.server_ip, self.request, self.ack, self.response
 
 @define
 class GameProtocolConfig:
