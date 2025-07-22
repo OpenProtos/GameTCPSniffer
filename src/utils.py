@@ -88,7 +88,8 @@ class Communication:
 class GameProtocolConfig:
     target_ports: List[int]
     ack_packet_size: int
-    proto: str
+    proto: List[str]
+    blacklist: List[str]
     magic_bytes: bytes
     database_path: Path
     schema_path: Path

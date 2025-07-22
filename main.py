@@ -66,7 +66,7 @@ async def main(ip_servs: List[str], cfg: GameProtocolConfig) -> None:
 
     # decoder task
     de_worker = get_decoder(queue_msg_decoder, queue_com_decoder, cfg.magic_bytes, cfg.display)
-    de_task = asyncio.create_task(de_worker(cfg.proto_path, cfg.proto, cfg.verbose))
+    de_task = asyncio.create_task(de_worker(cfg.proto_path, cfg.proto, cfg.blacklist, cfg.verbose))
 
     print("Decoder worker started")
 
@@ -117,13 +117,18 @@ def create_config_from_args() -> GameProtocolConfig:
         help="ACK packet size to filter (-1 for no filtering, default: -1)"
     )
     parser.add_argument(
-        '-pr', '--proto', 
-        type=str,
-        default="",
-        help="Proto packet to filter ("" will discard all packets, default: "")"
+        '-pr', '--protos',
+        nargs="+",
+        help="List of proto packets to filter (`""` will discard all packets)"
     )
     parser.add_argument(
-        '-mg', '--magic-bytes', 
+        '-bl', '--blacklist',
+        nargs="*",
+        default=[],
+        help="List of proto packets to blacklist"
+    )
+    parser.add_argument(
+        '-mb', '--magic-bytes', 
         type=str,
         default="",
         help="TODO"
@@ -160,8 +165,10 @@ def create_config_from_args() -> GameProtocolConfig:
     # check proto files
     if not Path(args.proto_path).exists():
         raise ValueError(f"Cannot find the proto folder {args.proto_path}, did you correctly export all proto files ?")
-    if not (Path(args.proto_path) / f"{args.proto}.proto").exists():
-        raise ValueError(f"Cannot find the proto file {args.proto}.proto in folder {args.proto_path}.")
+    
+    for proto in args.protos:
+        if not (Path(args.proto_path) / f"{proto}.proto").exists():
+            raise ValueError(f"Cannot find the proto file {args.proto}.proto in folder {args.proto_path}.")
 
     # compute magic_bytes
     magic_bytes_str = args.magic_bytes
@@ -173,7 +180,8 @@ def create_config_from_args() -> GameProtocolConfig:
     return GameProtocolConfig(
         target_ports=args.ports,
         ack_packet_size=args.filter,
-        proto=args.proto,
+        proto=args.protos,
+        blacklist=args.blacklist,
         magic_bytes=magic_bytes,
         database_path=Path(args.db_path),
         schema_path=Path(args.sc_path),
@@ -189,7 +197,8 @@ if __name__ == "__main__":
 
     print(f"{'Monitoring ports':<35}: {config.target_ports}")
     print(f"{'ACK filter size':<35}: {config.ack_packet_size}")
-    print(f"{'Capturing proto':<35}: {config.proto}")
+    print(f"{'Capturing protos':<35}: {config.proto}")
+    print(f"{'Ignoring protos':<35}: {config.blacklist}")
     print(f"{'Magic bytes used to decode protos':<35}: {config.magic_bytes!r}")
     print("Getting servers...")
     servs = get_game_servers(config.target_ports)

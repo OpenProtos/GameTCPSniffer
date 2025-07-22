@@ -9,7 +9,7 @@ import queue
 import re
 import subprocess
 from types import ModuleType
-from typing import Callable, Coroutine, Tuple
+from typing import Callable, Coroutine, List, Tuple
 
 from scapy.layers.inet import TCP
 from google.protobuf.any_pb2 import Any
@@ -91,11 +91,11 @@ def get_decoder(
     queue_com: asyncio.Queue[TCP_Message],
     magic_bytes: bytes,
     display: bool
-) -> Callable[[Path, str, bool], Coroutine[None, None, None]]:
+) -> Callable[[Path, List[str], List[str], bool], Coroutine[None, None, None]]:
 
     display_tcp = get_tcp_display(display)
 
-    async def decoder(proto_path: Path, proto_filter: str, verbose: bool) -> None:
+    async def decoder(proto_path: Path, protos_filter: List[str], blacklist: List[str], verbose: bool) -> None:
         while True:
             try:
                 # Convert blocking get to async
@@ -114,10 +114,10 @@ def get_decoder(
                 any_msg = Any()
                 any_msg.ParseFromString(payload[magic_number_index-2:])
 
-                if verbose:
+                if verbose and not any(b in any_msg.type_url for b in blacklist) and any_msg.type_url != "":
                     print(f"{CLIENT_COLOR}Proto\t\t: {any_msg.type_url}{COLOR_END}")
 
-                if proto_filter != "" and proto_filter in any_msg.type_url:
+                if protos_filter != [""] and any((proto_filter:=p) in any_msg.type_url for p in protos_filter):
 
                     display_tcp(*msg.unpack(), DEFAULT_COLOR)
                     print(f"{DEFAULT_COLOR}Varint\t\t: {varint_bytes.to_hex()}{COLOR_END}")

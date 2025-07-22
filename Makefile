@@ -9,6 +9,7 @@ ifeq ($(OS),Windows_NT)
   WHERE=where
   NULL_DEVICE=nul
   PROTOBUF_INSTALLATION=winget install protobuf
+  RM=Remove-Item
 else
   VENV=venv
   BIN=$(VENV)/bin
@@ -19,6 +20,7 @@ else
   WHERE=which
   NULL_DEVICE=/dev/null
   PROTOBUF_INSTALLATION=sudo apt-get update && sudo apt-get install -y protobuf-compiler
+  RM=rm
 endif
 
 # install
@@ -47,5 +49,5 @@ check: test mypy
 debug:
 	$(VENV_PYTHON) -m pdb main.py $(VAR)
 
-protoc:
-	where /q pioupiou && echo File exist
+clean:
+	$(RM) *_pb2.py
