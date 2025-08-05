@@ -76,7 +76,7 @@ def generate_packet_handler(
             if (src_ip in servers or dst_ip in servers):
                 payload = bytes(pkt[TCP].payload)
 
-                if filter_payload_len == -1: # no filtering, display everything
+                if filter_payload_len == -1: # no filtering, decode everything
                     msg = Message(src_ip, dst_ip, pkt, CommunicationFlag.OTHER)
                     try:
                         db_queue_for_decoder.put_nowait(msg)

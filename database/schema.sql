@@ -13,5 +13,8 @@ CREATE TABLE IF NOT EXISTS `tcp_proto_messages` (
   `size` INT NOT NULL,
   `nb_packet` INT NOT NULL,
   `data` TEXT NOT NULL,
+  `version` TEXT NOT NULL,
+  `hash` TEXT NOT NULL,
+  `session` INTEGER,
   timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
 );

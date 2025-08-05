@@ -68,9 +68,11 @@ class TCP_Message:
     size: int
     nb_packet: int
     data: JSON
+    version: str
+    hash: str
 
-    def unpack(self) -> Tuple[str, str, str, int, int, JSON]:
-        return self.client_ip, self.server_ip, self.proto, self.size, self.nb_packet, self.data
+    def unpack(self) -> Tuple[str, str, str, int, int, JSON, str, str]:
+        return self.client_ip, self.server_ip, self.proto, self.size, self.nb_packet, self.data, self.version, self.hash
 
 
 @define
@@ -94,6 +96,7 @@ class GameProtocolConfig:
     database_path: Path
     schema_path: Path
     proto_path: Path
+    game_version: str
     display: bool
     verbose: bool
 

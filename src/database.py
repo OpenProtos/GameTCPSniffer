@@ -40,7 +40,7 @@ def get_database_worker(
                     )
                 elif isinstance(item, TCP_Message):
                     await db_connection.execute(
-                        "INSERT INTO tcp_proto_messages(client_ip, server_ip, proto, size, nb_packet, data) VALUES (?, ?, ?, ?, ?, ?)",
+                        "INSERT INTO tcp_proto_messages(client_ip, server_ip, proto, size, nb_packet, data, version, hash) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                         (item.unpack())
                     )
                 else:

@@ -3,6 +3,7 @@
 # This file is part of GameTCPSniffer project from https://github.com/remyCases/GameTCPSniffer.
 
 import asyncio
+import hashlib
 from importlib import import_module
 from pathlib import Path
 import queue
@@ -16,6 +17,9 @@ from google.protobuf.any_pb2 import Any
 from google.protobuf.json_format import MessageToJson
 
 from src.utils import CLIENT_COLOR, COLOR_END, DEFAULT_COLOR, ByteArrayRepr, Message, TCP_Message, get_tcp_display
+
+MAX_TRIES_IMPORT = 100
+BUF_SIZE = 65536 # reading the buffer in chunks of BUF_SIZE to avoid reading all the file in once
 
 def compile_proto(proto_path: Path, proto_name: str) -> None:
     try:
@@ -32,17 +36,28 @@ def compile_proto(proto_path: Path, proto_name: str) -> None:
         raise
 
 
-def import_proto(proto_path: Path, proto_name: str) -> ModuleType:
+def hash_proto(proto_path: Path) -> str:
+    sha256 = hashlib.sha256()
+    with open(proto_path, 'rb') as f:
+        while True:
+            data = f.read(BUF_SIZE)
+            if not data:
+                break
+            sha256.update(data)
 
-    while True:
+    return sha256.hexdigest()
+
+def import_proto(proto_path: Path, proto_name: str) -> Tuple[ModuleType, str]:
+
+    for _ in range(MAX_TRIES_IMPORT):
         try:
             print(f"Trying loading {proto_name}_pb2...")
             proto_module = import_module(f"{proto_name}_pb2")
             # Managed to import => return
-            return proto_module
+            return proto_module, hash_proto(proto_path / f"{proto_name}.proto")
 
         except ImportError as e:
-            match = re.search(r"No module named '(\w{3})_pb2'", e.msg)
+            match = re.search(r"No module named '(\w+)_pb2'", e.msg)
             if match:
                 proto_file = match.group(1)
 
@@ -56,6 +71,8 @@ def import_proto(proto_path: Path, proto_name: str) -> ModuleType:
         
         except Exception:
             raise
+
+    raise TimeoutError(f"Maximum retry limit reached ({MAX_TRIES_IMPORT} attempts). Import of {proto_name} be completed.")
 
 
 def parse_varints_from_hex(bytes_msg: bytes) -> Tuple[int, int, ByteArrayRepr]:
@@ -90,7 +107,8 @@ def get_decoder(
     queue_msg: queue.Queue[Message],
     queue_com: asyncio.Queue[TCP_Message],
     magic_bytes: bytes,
-    display: bool
+    display: bool,
+    game_version: str
 ) -> Callable[[Path, List[str], List[str], bool], Coroutine[None, None, None]]:
 
     display_tcp = get_tcp_display(display)
@@ -126,7 +144,7 @@ def get_decoder(
 
                     print("---")
                     print("Decoding...")
-                    proto_module = import_proto(proto_path, proto_filter)
+                    proto_module, proto_hash = import_proto(proto_path, proto_filter)
                     proto_class = getattr(proto_module, proto_filter)
                     proto_msg = proto_class()
                     proto_msg.ParseFromString(any_msg.value)
@@ -139,7 +157,9 @@ def get_decoder(
                         proto=proto_filter,
                         size=value_varint + bytes_consumed,
                         nb_packet=1,
-                        data=MessageToJson(proto_msg)
+                        data=MessageToJson(proto_msg),
+                        version=game_version,
+                        hash=proto_hash,
                     )
                     print("-------")
 

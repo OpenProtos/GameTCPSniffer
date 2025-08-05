@@ -65,7 +65,7 @@ async def main(ip_servs: List[str], cfg: GameProtocolConfig) -> None:
     print("PacketSequenceHandler worker started")
 
     # decoder task
-    de_worker = get_decoder(queue_msg_decoder, queue_com_decoder, cfg.magic_bytes, cfg.display)
+    de_worker = get_decoder(queue_msg_decoder, queue_com_decoder, cfg.magic_bytes, cfg.display, cfg.game_version)
     de_task = asyncio.create_task(de_worker(cfg.proto_path, cfg.proto, cfg.blacklist, cfg.verbose))
 
     print("Decoder worker started")
@@ -118,8 +118,9 @@ def create_config_from_args() -> GameProtocolConfig:
     )
     parser.add_argument(
         '-pr', '--protos',
-        nargs="+",
-        help="List of proto packets to filter (`""` will discard all packets)"
+        nargs="*",
+        default=[],
+        help="List of proto packets to filter"
     )
     parser.add_argument(
         '-bl', '--blacklist',
@@ -131,7 +132,7 @@ def create_config_from_args() -> GameProtocolConfig:
         '-mb', '--magic-bytes', 
         type=str,
         default="",
-        help="TODO"
+        help="Magic bytes used to find the Any message in each packets (default: ``)"
     )
     parser.add_argument(
         '--db-path',
@@ -147,6 +148,12 @@ def create_config_from_args() -> GameProtocolConfig:
         '--proto-path',
         default="proto",
         help="Protobuf folder path (default: proto)"
+    )
+    parser.add_argument(
+        '-gv', '--game-version',
+        type=str,
+        default="UNKNOWN",
+        help="Version of the game you're sniffing (default: `UNKNOWN`)"
     )
     parser.add_argument(
         '-d', '--display', 
@@ -168,7 +175,7 @@ def create_config_from_args() -> GameProtocolConfig:
     
     for proto in args.protos:
         if not (Path(args.proto_path) / f"{proto}.proto").exists():
-            raise ValueError(f"Cannot find the proto file {args.proto}.proto in folder {args.proto_path}.")
+            raise ValueError(f"Cannot find the proto file {proto}.proto in folder {args.proto_path}.")
 
     # compute magic_bytes
     magic_bytes_str = args.magic_bytes
@@ -186,6 +193,7 @@ def create_config_from_args() -> GameProtocolConfig:
         database_path=Path(args.db_path),
         schema_path=Path(args.sc_path),
         proto_path=Path(args.proto_path),
+        game_version=args.game_version,
         display=args.display,
         verbose=args.verbose,
     )
