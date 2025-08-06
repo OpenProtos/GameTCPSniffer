@@ -12,7 +12,7 @@ import aiosqlite
 from scapy.all import sniff, Packet
 import argparse
 
-from src.database import get_database_worker
+from src.database import get_database_worker, get_last_session_id
 from src.decoder import get_decoder
 from src.servers import generate_packet_handler, get_game_servers
 from src.state_machine import get_packet_sequence_worker
@@ -25,6 +25,10 @@ async def main(ip_servs: List[str], cfg: GameProtocolConfig) -> None:
         async with aiofiles.open(cfg.schema_path, encoding="utf-8") as file:
             await db.executescript(await file.read())
         await db.commit()
+
+    # getting the last session id
+    db_connection = await aiosqlite.connect(cfg.database_path / "tcp.db")
+    last_session_id = await get_last_session_id(db_connection)
 
     cancel_event = threading.Event()
     # queue for communication between tasks
@@ -71,8 +75,7 @@ async def main(ip_servs: List[str], cfg: GameProtocolConfig) -> None:
     print("Decoder worker started")
 
     # database task
-    db_connection = await aiosqlite.connect(cfg.database_path / "tcp.db")
-    db_worker = get_database_worker(queue_com_decoder)
+    db_worker = get_database_worker(queue_com_decoder, last_session_id + 1)
     db_task = asyncio.create_task(db_worker(db_connection))
 
     print("Database worker started")

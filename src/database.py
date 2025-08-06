@@ -10,9 +10,21 @@ from src.utils import Communication, TCP_Message
 
 T = TypeVar('T', Communication, TCP_Message)
 
+
+async def get_last_session_id(db_connection: aiosqlite.Connection) -> int:
+    async with db_connection.execute(
+        "SELECT COALESCE(MAX(session), 0) FROM tcp_proto_messages"
+    ) as cursor:
+        row = await cursor.fetchone()
+        if row is None:
+            raise ValueError("Can't find the previous session id. Is your schema containing the `session` column ?")
+        
+        return row[0]
+
 @overload
 def get_database_worker(
     queue: asyncio.Queue[Communication],
+    session: int,
 ) -> Callable[[aiosqlite.Connection], Coroutine[None, None, None]]:
     ...
 
@@ -20,12 +32,14 @@ def get_database_worker(
 @overload
 def get_database_worker(
     queue: asyncio.Queue[TCP_Message],
+    session: int,
 ) -> Callable[[aiosqlite.Connection], Coroutine[None, None, None]]:
     ...
 
 
 def get_database_worker(
-    queue: Union[asyncio.Queue[Communication], asyncio.Queue[TCP_Message]]
+    queue: Union[asyncio.Queue[Communication], asyncio.Queue[TCP_Message]],
+    session: int,
 ) -> Callable[[aiosqlite.Connection], Coroutine[None, None, None]]:
     
     async def database_worker(db_connection: aiosqlite.Connection) -> None:
@@ -40,8 +54,8 @@ def get_database_worker(
                     )
                 elif isinstance(item, TCP_Message):
                     await db_connection.execute(
-                        "INSERT INTO tcp_proto_messages(client_ip, server_ip, proto, size, nb_packet, data, version, hash) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                        (item.unpack())
+                        "INSERT INTO tcp_proto_messages(client_ip, server_ip, proto, size, nb_packet, data, version, hash, session) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        (*item.unpack(), session)
                     )
                 else:
                     raise ValueError(f"Unexpected item type: {type(item)}")
