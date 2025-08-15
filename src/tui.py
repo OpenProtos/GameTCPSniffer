@@ -32,13 +32,14 @@ class TCPSnifferApp(App[None]):
         super().__init__()
         self._restart_requested = False
         self._new_args: Sequence[str] = []
-        logging.basicConfig(filename="debug.log", level=logging.INFO)
-        self.logger = logging.getLogger()
+        self.logger = logging.getLogger("tcp_sniffer")
         self.history = history
         self.history_index = len(self.history)
 
 
     async def initialize(self, arguments: Sequence[str]) -> bool:
+
+        self.logger.info("Initializing app...")
 
         printer = self.add_message
         printer_display = self.add_display
@@ -53,17 +54,17 @@ class TCPSnifferApp(App[None]):
             self.runtime_parser.format_usage()
         )
  
-        printer(f"{'Monitoring ports':<35}: {self.config.ports}")
-        printer(f"{'Capturing protos':<35}: {self.config.protos}")
-        printer(f"{'Ignoring protos':<35}: {self.config.blacklist}")
-        printer(f"{'Magic bytes used to decode protos':<35}: {self.config.magic_bytes!r}")
-        printer("Getting servers...")
+        self.add_message_and_log(f"{'Monitoring ports':<35}: {self.config.ports}")
+        self.add_message_and_log(f"{'Capturing protos':<35}: {self.config.protos}")
+        self.add_message_and_log(f"{'Ignoring protos':<35}: {self.config.blacklist}")
+        self.add_message_and_log(f"{'Magic bytes used to decode protos':<35}: {self.config.magic_bytes!r}")
+        self.add_message_and_log("Getting servers...")
 
         servs = get_game_servers(self.config.ports, printer)
         if not servs:
             printer(f"Script is closing, no servers on port {self.config.ports} were found.")
             exit()
-        printer(f"Starting packet capture for {servs} servers...")
+        self.add_message_and_log(f"Starting packet capture for {servs} servers...")
         self.ip_servs = [ip for (ip, _) in servs]
 
         async with aiosqlite.connect(self.config.db_path / "tcp.db") as db:
@@ -121,13 +122,13 @@ class TCPSnifferApp(App[None]):
             )
         )
 
-        printer("Decoder worker started")
+        self.add_message_and_log("Decoder worker started")
 
         # database task
         db_worker = get_database_worker(queue_com_decoder, last_session_id + 1, printer)
         db_task = asyncio.create_task(db_worker(self.db_connection))
 
-        printer("Database worker started")
+        self.add_message_and_log("Database worker started")
 
         self.tasks = [
             sn_task,
@@ -200,9 +201,13 @@ class TCPSnifferApp(App[None]):
             self.command_input.action_end()
 
 
-    def add_message(self, message: str) -> None:
+    def add_message_and_log(self, message: str) -> None:
         self.packet_log.write(message)
         self.logger.info(message)
+
+
+    def add_message(self, message: str) -> None:
+        self.packet_log.write(message)
 
 
     def add_display(self, message: str) -> None:
@@ -220,7 +225,7 @@ class TCPSnifferApp(App[None]):
     async def request_restart(self, new_args: Sequence[str]) -> None:
         self._restart_requested = True
         self._new_args = new_args
-        self.logger.info(f"Restarting with {' '.join(self._new_args)}")
+        self.logger.info(f"Restarting with {' '.join(self._new_args) if self._new_args else 'no args'}")
         self.exit()
 
 

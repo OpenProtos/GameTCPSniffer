@@ -128,38 +128,56 @@ def get_decoder(
         while True:
             try:
                 # Convert blocking get to async
-                # Wait for communication data
+                # Wait for communication data comming from the sniffer
                 msg = await asyncio.to_thread(queue_msg.get, timeout=1)
                 payload = bytes(msg.pkt[TCP].payload)
+
+                # decode the varint
                 value_varint, bytes_consumed, varint_bytes = parse_varints_from_hex(payload)
 
+                # detect messages that spawn on multiple packets
+                # not handled yet
                 if value_varint + bytes_consumed > len(payload):
                     raise ValueError(f"Packet size is {len(payload)} but {value_varint + bytes_consumed} was expected")
 
-                magic_number_index = -1
-                if magic_bytes in payload:
-                    magic_number_index = payload.index(magic_bytes)
+                # if some magic_bytes were given, use them to find the Any protobuf
+                if magic_bytes:
+                    magic_number_index = -1
+                    if magic_bytes in payload:
+                        magic_number_index = payload.index(magic_bytes)
+                    any_msg = Any()
+                    any_msg.ParseFromString(payload[magic_number_index-2:])
+                # else print the payload as ascii for exploration purpose
+                # and stop here
+                else:
+                    printer_log(payload.decode('ascii', 'replace'))
+                    printer_log("---")
+                    continue
 
-                any_msg = Any()
-                any_msg.ParseFromString(payload[magic_number_index-2:])
-
+                # if verbose, print the name of each proto found unless they are blacklist
+                # it's an exploration feature
                 if verbose and not any(b in any_msg.type_url for b in blacklist) and any_msg.type_url != "":
                     print_proto_name(printer_log, any_msg)
 
+                # if the message needs to handle, decode and display it
                 if protos_filter != [""] and any((proto_filter:=p) in any_msg.type_url for p in protos_filter):
 
                     display_tcp(*msg.unpack(), None)
                     print_varint(printer_log, value_varint, bytes_consumed, varint_bytes)
                     printer_log("---")
                     printer_log("Decoding...")
+
+                    # import desired proto file, compile it if needed
                     proto_module, proto_hash = import_proto(proto_path, proto_filter, printer_log)
                     proto_class = getattr(proto_module, proto_filter)
                     proto_msg = proto_class()
+                    # parse it
                     proto_msg.ParseFromString(any_msg.value)
                     printer_log("---")
                     print_proto_name(printer_display, any_msg)
                     printer_display(MessageToJson(proto_msg))
 
+                    # create an abstraction for communication with other tasks
                     tcp_msg = TCP_Message(
                         client_ip=f"{msg.dst_ip}:{msg.pkt[TCP].sport}",
                         server_ip=f"{msg.src_ip}:{msg.pkt[TCP].dport}",

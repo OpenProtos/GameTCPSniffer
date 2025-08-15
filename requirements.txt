@@ -10,3 +10,6 @@ types-protobuf
 msgpack
 msgpack-types
 textual
+pyinstrument
+pyyaml
+

@@ -2,9 +2,13 @@
 # See LICENSE file for extended copyright information.
 # This file is part of GameTCPSniffer project from https://github.com/remyCases/GameTCPSniffer.
 
+import logging.config
 import sys
 import asyncio
 from typing import List, Sequence
+from pathlib import Path
+
+import yaml
 
 from src.tui import TCPSnifferApp
 
@@ -40,6 +44,11 @@ async def main(args: Sequence[str]) -> None:
 
 
 if __name__ == "__main__":
+    with open(Path("logging_configs/config.yaml"), "r") as f:
+        config = yaml.safe_load(f)
+
+    logging.config.dictConfig(config)
+
     asyncio.run(main(sys.argv[1:]))
     # since the app does not return a restored terminal, and I tried, and I tried and I tried to fix it
     # I call it a feature and grant the user with some magic
