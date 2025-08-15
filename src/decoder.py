@@ -16,10 +16,13 @@ from scapy.layers.inet import TCP
 from google.protobuf.any_pb2 import Any
 from google.protobuf.json_format import MessageToJson
 
-from src.utils import CLIENT_COLOR, COLOR_END, DEFAULT_COLOR, ByteArrayRepr, Message, TCP_Message, get_tcp_display
+from src.utils import ByteArrayRepr, Message, TCP_Message
+from src.utils_display import get_tcp_display, print_proto_name, print_varint 
+from src.serialization import serialize_protobuf_message
 
 MAX_TRIES_IMPORT = 100
 BUF_SIZE = 65536 # reading the buffer in chunks of BUF_SIZE to avoid reading all the file in once
+
 
 def compile_proto(proto_path: Path, proto_name: str) -> None:
     try:
@@ -47,11 +50,16 @@ def hash_proto(proto_path: Path) -> str:
 
     return sha256.hexdigest()
 
-def import_proto(proto_path: Path, proto_name: str) -> Tuple[ModuleType, str]:
+
+def import_proto(
+    proto_path: Path,
+    proto_name: str,
+    printer: Callable[[str], None],
+) -> Tuple[ModuleType, str]:
 
     for _ in range(MAX_TRIES_IMPORT):
         try:
-            print(f"Trying loading {proto_name}_pb2...")
+            printer(f"Trying loading {proto_name}_pb2...")
             proto_module = import_module(f"{proto_name}_pb2")
             # Managed to import => return
             return proto_module, hash_proto(proto_path / f"{proto_name}.proto")
@@ -61,14 +69,14 @@ def import_proto(proto_path: Path, proto_name: str) -> Tuple[ModuleType, str]:
             if match:
                 proto_file = match.group(1)
 
-                print(f"No compiled proto file for {proto_file}, trying to compile it...")
+                printer(f"No compiled proto file for {proto_file}, trying to compile it...")
                 compile_proto(proto_path, proto_file)
-                print(f"Compilation for {proto_file} done...")
+                printer(f"Compilation for {proto_file} done...")
 
                 continue
 
             raise ValueError(f"Cant parse error message to automatically compile protobuf files. Error was: {e}")
-        
+
         except Exception:
             raise
 
@@ -80,38 +88,41 @@ def parse_varints_from_hex(bytes_msg: bytes) -> Tuple[int, int, ByteArrayRepr]:
     Parse a varint from a hexadecimal string.
     Returns a (varint_value, bytes_consumed, varint_bytes) tuple.
     """
-    
+
     position = 0
-    
+
     result = 0
     shift = 0
     start_pos = position
-    
+
     while position < len(bytes_msg):
         byte = bytes_msg[position]
         position += 1
-        
+
         # Extract the 7 lower bits and shift them
         result |= (byte & 0x7F) << shift
         shift += 7
-        
+
         # If MSB is 0, this is the last byte of the varint
         if (byte & 0x80) == 0:
             break
-    
+
     bytes_consumed = position - start_pos
-    
+
     return result, bytes_consumed, ByteArrayRepr.from_bytes(bytes_msg[start_pos:position])
+
 
 def get_decoder(
     queue_msg: queue.Queue[Message],
     queue_com: asyncio.Queue[TCP_Message],
     magic_bytes: bytes,
     display: bool,
-    game_version: str
+    game_version: str,
+    printer_log: Callable[[str], None],
+    printer_display: Callable[[str], None],
 ) -> Callable[[Path, List[str], List[str], bool], Coroutine[None, None, None]]:
 
-    display_tcp = get_tcp_display(display)
+    display_tcp = get_tcp_display(printer_log, display)
 
     async def decoder(proto_path: Path, protos_filter: List[str], blacklist: List[str], verbose: bool) -> None:
         while True:
@@ -124,32 +135,30 @@ def get_decoder(
 
                 if value_varint + bytes_consumed > len(payload):
                     raise ValueError(f"Packet size is {len(payload)} but {value_varint + bytes_consumed} was expected")
-                
+
                 magic_number_index = -1
                 if magic_bytes in payload:
                     magic_number_index = payload.index(magic_bytes)
-                
+
                 any_msg = Any()
                 any_msg.ParseFromString(payload[magic_number_index-2:])
 
                 if verbose and not any(b in any_msg.type_url for b in blacklist) and any_msg.type_url != "":
-                    print(f"{CLIENT_COLOR}Proto\t\t: {any_msg.type_url}{COLOR_END}")
+                    print_proto_name(printer_log, any_msg)
 
                 if protos_filter != [""] and any((proto_filter:=p) in any_msg.type_url for p in protos_filter):
 
-                    display_tcp(*msg.unpack(), DEFAULT_COLOR)
-                    print(f"{DEFAULT_COLOR}Varint\t\t: {varint_bytes.to_hex()}{COLOR_END}")
-                    print(f"{DEFAULT_COLOR}Value\t\t: {value_varint}{COLOR_END}")
-                    print(f"{DEFAULT_COLOR}VarLen\t\t: {bytes_consumed}{COLOR_END}")
-
-                    print("---")
-                    print("Decoding...")
-                    proto_module, proto_hash = import_proto(proto_path, proto_filter)
+                    display_tcp(*msg.unpack(), None)
+                    print_varint(printer_log, value_varint, bytes_consumed, varint_bytes)
+                    printer_log("---")
+                    printer_log("Decoding...")
+                    proto_module, proto_hash = import_proto(proto_path, proto_filter, printer_log)
                     proto_class = getattr(proto_module, proto_filter)
                     proto_msg = proto_class()
                     proto_msg.ParseFromString(any_msg.value)
-                    print("---")
-                    print(proto_msg)
+                    printer_log("---")
+                    print_proto_name(printer_display, any_msg)
+                    printer_display(MessageToJson(proto_msg))
 
                     tcp_msg = TCP_Message(
                         client_ip=f"{msg.dst_ip}:{msg.pkt[TCP].sport}",
@@ -157,11 +166,11 @@ def get_decoder(
                         proto=proto_filter,
                         size=value_varint + bytes_consumed,
                         nb_packet=1,
-                        data=MessageToJson(proto_msg),
+                        data=serialize_protobuf_message(proto_msg),
                         version=game_version,
                         hash=proto_hash,
                     )
-                    print("-------")
+                    printer_display("-------")
 
                     await queue_com.put(tcp_msg)
 
@@ -170,6 +179,7 @@ def get_decoder(
             except queue.Empty:
                 continue  # Timeout, try again
             except Exception as e:
-                print(f"Decoder error: {e}")
+                printer_log(f"Decoder error: {e}")
 
     return decoder
+

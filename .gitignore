@@ -20,3 +20,7 @@ __pycache__/
 
 proto
 *_pb2.py
+
+# Log files
+
+*.log

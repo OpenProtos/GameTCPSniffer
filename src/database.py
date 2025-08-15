@@ -8,6 +8,7 @@ import aiosqlite
 
 from src.utils import Communication, TCP_Message
 
+
 T = TypeVar('T', Communication, TCP_Message)
 
 
@@ -18,13 +19,14 @@ async def get_last_session_id(db_connection: aiosqlite.Connection) -> int:
         row = await cursor.fetchone()
         if row is None:
             raise ValueError("Can't find the previous session id. Is your schema containing the `session` column ?")
-        
+
         return row[0]
 
 @overload
 def get_database_worker(
     queue: asyncio.Queue[Communication],
     session: int,
+    printer: Callable[[str], None],
 ) -> Callable[[aiosqlite.Connection], Coroutine[None, None, None]]:
     ...
 
@@ -33,6 +35,7 @@ def get_database_worker(
 def get_database_worker(
     queue: asyncio.Queue[TCP_Message],
     session: int,
+    printer: Callable[[str], None],
 ) -> Callable[[aiosqlite.Connection], Coroutine[None, None, None]]:
     ...
 
@@ -40,12 +43,13 @@ def get_database_worker(
 def get_database_worker(
     queue: Union[asyncio.Queue[Communication], asyncio.Queue[TCP_Message]],
     session: int,
+    printer: Callable[[str], None],
 ) -> Callable[[aiosqlite.Connection], Coroutine[None, None, None]]:
-    
+
     async def database_worker(db_connection: aiosqlite.Connection) -> None:
         while True:
             item = await queue.get()
-            
+
             try:
                 if isinstance(item, Communication):
                     await db_connection.execute(
@@ -59,13 +63,14 @@ def get_database_worker(
                     )
                 else:
                     raise ValueError(f"Unexpected item type: {type(item)}")
-                
+
                 await db_connection.commit()
-                print(f"Stored: {item.client_ip} -> {item.server_ip}")
-                
+                printer(f"Stored: {item.client_ip} -> {item.server_ip}")
+
             except Exception as e:
-                print(f"Database error: {e}")
-            
+                printer(f"Database error: {e}")
+
             queue.task_done()
-    
+
     return database_worker
+

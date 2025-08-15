@@ -14,14 +14,17 @@ from scapy.layers.inet import IP, TCP
 from src.utils import CommunicationFlag, Message, is_client
 
 
-def get_game_servers(ports: List[int]) -> List[Tuple[str, int]]:
+def get_game_servers(
+    ports: List[int],
+    printer: Callable[[str], None],
+) -> List[Tuple[str, int]]:
     """Find current server IPs given some specific ports by scanning netstat"""
     try:
         # Get netstat output
         result = subprocess.run(['netstat', '-an'], shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
         if result.returncode != 0:
-            print(f"Netstat failed: {result.stderr!r}")
+            printer(f"Netstat failed: {result.stderr!r}")
             return []
 
         try:
@@ -47,22 +50,23 @@ def get_game_servers(ports: List[int]) -> List[Tuple[str, int]]:
                         # Make sure it's not localhost
                         if not is_client(ip):
                             servers.append((ip, port))
-        
+
         return servers
-    
+
     except Exception as e:
-        print(f"Error scanning netstat: {e}")
+        printer(f"Error scanning netstat: {e}")
         return []
 
-def generate_packet_handler(
-    db_queue_for_statemachine: queue.Queue[Message], 
-    db_queue_for_decoder: queue.Queue[Message]
-) -> Callable[[Packet, List[str], int], None]:
 
-    def packet_handler(pkt: Packet, servers: List[str], filter_payload_len: int) -> None:
+def generate_packet_handler(
+    db_queue_for_decoder: queue.Queue[Message],
+    printer: Callable[[str], None],
+) -> Callable[[Packet, List[str]], None]:
+
+    def packet_handler(pkt: Packet, servers: List[str]) -> None:
         """
         Filters TCP packets following a list of servers.
-        
+
         Args:
             pkt: Scapy packet object
             servers: List of server IPs to monitor
@@ -72,28 +76,15 @@ def generate_packet_handler(
         if pkt.haslayer(TCP) and pkt.haslayer(IP):
             src_ip = pkt[IP].src
             dst_ip = pkt[IP].dst
-            
+
             if (src_ip in servers or dst_ip in servers):
-                payload = bytes(pkt[TCP].payload)
 
-                if filter_payload_len == -1: # no filtering, decode everything
-                    msg = Message(src_ip, dst_ip, pkt, CommunicationFlag.OTHER)
-                    try:
-                        db_queue_for_decoder.put_nowait(msg)
-                    except asyncio.QueueFull:
-                        print("Database queue full !")
-                    return
-
-                if filter_payload_len > 0 and len(payload) == filter_payload_len and not is_client(src_ip):
-                    msg = Message(src_ip, dst_ip, pkt, CommunicationFlag.ACK)
-
-                else:
-                    msg = Message(src_ip, dst_ip, pkt, CommunicationFlag.OTHER)
- 
-                # Non-blocking queue put
+                msg = Message(src_ip, dst_ip, pkt, CommunicationFlag.OTHER)
                 try:
-                    db_queue_for_statemachine.put_nowait(msg)
+                    db_queue_for_decoder.put_nowait(msg)
                 except asyncio.QueueFull:
-                    print("Database queue full !")
+                    printer("Database queue full !")
+                return
 
     return packet_handler
+

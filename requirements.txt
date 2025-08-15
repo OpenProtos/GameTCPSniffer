@@ -7,3 +7,6 @@ types-aiofiles
 mypy
 protobuf>=6.31
 types-protobuf
+msgpack
+msgpack-types
+textual

@@ -1,5 +1,6 @@
 PYTHON=python
 ifeq ($(OS),Windows_NT)
+  SHELL := pwsh.exe
   VENV=.venv
   BIN=$(VENV)\Scripts
   PIP=$(BIN)\pip
