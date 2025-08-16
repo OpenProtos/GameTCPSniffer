@@ -12,4 +12,5 @@ msgpack-types
 textual
 pyinstrument
 pyyaml
+types-PyYAML
 

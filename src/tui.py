@@ -14,9 +14,9 @@ from scapy.all import sniff, Packet
 
 from src.parser import CommandProcessor, create_runtime_parser, create_start_config_from_args 
 from src.servers import get_game_servers, generate_packet_handler
-from src.decoder import get_decoder
+from src.decoder import TCPDecoder
 from src.database import get_database_worker, get_last_session_id
-from src.utils import Message, TCP_Message
+from src.utils import Message, TCP_Message, ConfigItem
 
 
 class TCPSnifferApp(App[None]):
@@ -38,7 +38,6 @@ class TCPSnifferApp(App[None]):
 
 
     async def initialize(self, arguments: Sequence[str]) -> bool:
-
         self.logger.info("Initializing app...")
 
         printer = self.add_message
@@ -46,13 +45,7 @@ class TCPSnifferApp(App[None]):
         self._used_args = arguments
         self.config = create_start_config_from_args(arguments)
         self.runtime_parser = create_runtime_parser()
-        self.command_processor = CommandProcessor(
-            self.add_result,
-            self.clear,
-            self.request_restart,
-            self._used_args,
-            self.runtime_parser.format_usage()
-        )
+        
  
         self.add_message_and_log(f"{'Monitoring ports':<35}: {self.config.ports}")
         self.add_message_and_log(f"{'Capturing protos':<35}: {self.config.protos}")
@@ -80,8 +73,18 @@ class TCPSnifferApp(App[None]):
         self.cancel_event = threading.Event()
 
         # queue for communication between tasks
+        queue_cfg_decoder = asyncio.Queue[ConfigItem](maxsize=100)
         queue_msg_decoder = queue.Queue[Message](maxsize=100)
         queue_com_decoder = asyncio.Queue[TCP_Message](maxsize=100)
+
+        self.command_processor = CommandProcessor(
+            self.add_result,
+            self.clear,
+            self.request_restart,
+            self._used_args,
+            queue_cfg_decoder,
+            self.runtime_parser.format_usage()
+        )
 
         # sniffer thread
         packet_handler = generate_packet_handler(queue_msg_decoder, printer)
@@ -104,23 +107,15 @@ class TCPSnifferApp(App[None]):
         )
 
         # decoder task
-        de_worker = get_decoder(
+        de_worker = TCPDecoder.get_decoder(
+            queue_cfg_decoder,
             queue_msg_decoder, 
             queue_com_decoder,
-            self.config.magic_bytes, 
-            self.config.display, 
-            self.config.game_version,
+            self.config,
             printer,
             printer_display
         )
-        de_task = asyncio.create_task(
-            de_worker(
-                self.config.proto_path, 
-                self.config.protos, 
-                self.config.blacklist, 
-                self.config.verbose
-            )
-        )
+        de_task = asyncio.create_task(de_worker())
 
         self.add_message_and_log("Decoder worker started")
 

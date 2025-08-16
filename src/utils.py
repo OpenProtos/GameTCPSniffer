@@ -82,6 +82,8 @@ class Communication:
         return self.client_ip, self.server_ip, self.request, self.ack, self.response
 
 
+ConfigItem = Tuple[str, List[int] | List[str] | bytes | Path | str | bool]
+
 @define
 class GameProtocolConfig:
     ports: List[int]
@@ -97,37 +99,42 @@ class GameProtocolConfig:
     _lock: asyncio.Lock = field(factory=asyncio.Lock, init=False)
 
 
-    async def add_proto(self, names: List[str]) -> None:
+    async def add_proto(self, names: List[str], queue: asyncio.Queue[ConfigItem]) -> None:
         async with self._lock:
             for p in names:
                 if p not in self.protos and (Path(self.proto_path) / f"{p}.proto").exists():
                     self.protos.append(p)
+        await queue.put(("protos", self.protos))
 
 
-    async def remove_proto(self, names: List[str]) -> None:
+    async def remove_proto(self, names: List[str], queue: asyncio.Queue[ConfigItem]) -> None:
         async with self._lock:
             for p in names:
                 if p in self.protos:
                     self.protos.remove(p)
+        await queue.put(("protos", self.protos))
 
 
-    async def add_blacklist(self, names: List[str]) -> None:
+    async def add_blacklist(self, names: List[str], queue: asyncio.Queue[ConfigItem]) -> None:
         async with self._lock:
             for p in names:
                 if p not in self.blacklist:
                     self.blacklist.append(p)
+        await queue.put(("blacklist", self.blacklist))
 
 
-    async def remove_blacklist(self, names: List[str]) -> None:
+    async def remove_blacklist(self, names: List[str], queue: asyncio.Queue[ConfigItem]) -> None:
         async with self._lock:
             for p in names:
                 if p in self.blacklist:
                     self.blacklist.remove(p)
+        await queue.put(("blacklist", self.blacklist))
 
 
-    async def toggle_verbose(self) -> None:
+    async def toggle_verbose(self, queue: asyncio.Queue[ConfigItem]) -> None:
         async with self._lock:
             self.verbose = not self.verbose
+        await queue.put(("verbose", self.verbose))
 
 
     def to_args(self) -> List[str]:

@@ -14,7 +14,7 @@ from src.tui import TCPSnifferApp
 
 
 async def main(args: Sequence[str]) -> None:
-    
+
     history: List[str] = []
     while True: # to handle restart
         app = TCPSnifferApp(history)

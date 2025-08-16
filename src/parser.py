@@ -1,9 +1,10 @@
+import asyncio
 from pathlib import Path
-from typing import Callable, Coroutine, List, Sequence 
+from typing import Callable, Coroutine, Sequence 
 
-from argparse import REMAINDER, ArgumentParser, Namespace 
+from argparse import ArgumentParser, Namespace 
 
-from src.utils import GameProtocolConfig
+from src.utils import ConfigItem, GameProtocolConfig
 
 
 def tcp_parser() -> ArgumentParser:
@@ -184,12 +185,14 @@ class CommandProcessor:
         clear_handler: Callable[[], None],
         restart_handler: Callable[[Sequence[str]], Coroutine[None, None, None]],
         previous_args: Sequence[str],
+        queue: asyncio.Queue[ConfigItem],
         usage: str,
     ):
         self.printer = printer
         self.clear_handler = clear_handler
         self.restart_handler = restart_handler
         self.previous_args = previous_args
+        self.queue = queue
         self.usage = usage
 
 
@@ -201,27 +204,27 @@ class CommandProcessor:
     ) -> None:
 
         if command.command == "add_proto":
-            await config.add_proto(command.names)
+            await config.add_proto(command.names, self.queue)
             self.printer(f"{'Capturing protos':<35}: {config.protos}")
 
         elif command.command  == "remove_proto":
-            await config.remove_proto(command.names)
+            await config.remove_proto(command.names, self.queue)
             self.printer(f"{'Capturing protos':<35}: {config.protos}")
 
         elif command.command  == "add_blacklist":
-            await config.add_blacklist(command.names)
+            await config.add_blacklist(command.names, self.queue)
             self.printer(f"{'Ignoring protos':<35}: {config.blacklist}")
 
         elif command.command  == "remove_blacklist":
-            await config.remove_blacklist(command.names)
+            await config.remove_blacklist(command.names, self.queue)
             self.printer(f"{'Ignoring protos':<35}: {config.blacklist}")
 
         elif command.command  == "verbose":
-            await config.toggle_verbose()
+            await config.toggle_verbose(self.queue)
             self.printer(f"{'Verbose':<35}: {config.verbose}")
 
         elif command.command  == "show":
-            self.printer(f"{'Capturing protos':<35}: {config.protos}\n{'Ignoring protos':<35}: {config.blacklist}")
+            self.printer(f"{'Capturing protos':<35}: {config.protos}\n{'Ignoring protos':<35}: {config.blacklist}\n{'Verbose':<35}: {config.verbose}")
 
         elif command.command  == "help":
             self.printer(self.usage)
