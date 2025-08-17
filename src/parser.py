@@ -19,12 +19,6 @@ def tcp_parser() -> ArgumentParser:
         help="Target server ports to monitor (default: 5555, 1119, 8080)"
     )
     parser.add_argument(
-        '-f', '--filter', 
-        type=int,
-        default=-1,
-        help="ACK packet size to filter (-1 for no filtering, default: -1)"
-    )
-    parser.add_argument(
         '-pr', '--protos',
         nargs="*",
         default=[],

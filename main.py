@@ -11,6 +11,7 @@ from pathlib import Path
 import yaml
 
 from src.tui import TCPSnifferApp
+from src.parser import tcp_parser
 
 
 async def main(args: Sequence[str]) -> None:
@@ -48,6 +49,8 @@ if __name__ == "__main__":
         config = yaml.safe_load(f)
 
     logging.config.dictConfig(config)
+    # for handling help command
+    _ = tcp_parser().parse_args(sys.argv[1:])
 
     asyncio.run(main(sys.argv[1:]))
     # since the app does not return a restored terminal, and I tried, and I tried and I tried to fix it
