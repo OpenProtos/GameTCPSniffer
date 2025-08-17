@@ -156,7 +156,7 @@ Contributions are welcome! This project maintains an educational focus for netwo
 - Use the `help` command within the TUI for runtime commands
 - Check that all dependencies are properly installed
 
-## 🔧 Advanced Configuration
+## Advanced Configuration
 
 ### Custom Magic Bytes
 
