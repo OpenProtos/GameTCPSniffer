@@ -21,13 +21,13 @@ async def main(args: Sequence[str]) -> None:
         app_task = asyncio.create_task(app.run_async())
         await asyncio.sleep(0.1)  # create widgets
 
-        # async initialization
-        if not await app.initialize(args):
-            app.logger.info("Failed to initialize app")
-            app_task.cancel()
-            return
-
         try:
+            # async initialization
+            if not await app.initialize(args):
+                app.logger.info("Failed to initialize app")
+                app_task.cancel()
+                return
+
             app.logger.info("Start packet capture now...\n")
             await app_task
 

@@ -3,7 +3,7 @@
 # This file is part of GameTCPSniffer project from https://github.com/remyCases/GameTCPSniffer.
 
 import asyncio
-from typing import Coroutine, Callable, TypeVar, Union, overload
+from typing import Coroutine, Callable, TypeVar, Union, cast, overload
 import aiosqlite
 
 from src.utils import Communication, TCP_Message
@@ -20,7 +20,7 @@ async def get_last_session_id(db_connection: aiosqlite.Connection) -> int:
         if row is None:
             raise ValueError("Can't find the previous session id. Is your schema containing the `session` column ?")
 
-        return row[0]
+        return cast(int, row[0])
 
 @overload
 def get_database_worker(

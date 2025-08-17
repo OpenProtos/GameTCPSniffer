@@ -45,8 +45,7 @@ class TCPSnifferApp(App[None]):
         self._used_args = arguments
         self.config = create_start_config_from_args(arguments)
         self.runtime_parser = create_runtime_parser()
-        
- 
+
         self.add_message_and_log(f"{'Monitoring ports':<35}: {self.config.ports}")
         self.add_message_and_log(f"{'Capturing protos':<35}: {self.config.protos}")
         self.add_message_and_log(f"{'Ignoring protos':<35}: {self.config.blacklist}")
@@ -55,8 +54,8 @@ class TCPSnifferApp(App[None]):
 
         servs = get_game_servers(self.config.ports, printer)
         if not servs:
-            printer(f"Script is closing, no servers on port {self.config.ports} were found.")
-            exit()
+            self.logger.error(f"Script is closing, no servers on port {self.config.ports} were found.")
+            raise RuntimeError(f"Script is closing, no servers on port {self.config.ports} were found.")
         self.add_message_and_log(f"Starting packet capture for {servs} servers...")
         self.ip_servs = [ip for (ip, _) in servs]
 
@@ -231,14 +230,18 @@ class TCPSnifferApp(App[None]):
 
     async def on_exit(self) -> None:
         self.logger.info("Cleaning up...")
-        self.cancel_event.set()
-        for task in self.tasks:
-            if not task.done():
-                task.cancel()
-        await asyncio.gather(*self.tasks, return_exceptions=True)
+
+        if hasattr(self, "cancel_event"):
+            self.cancel_event.set()
+
+        if hasattr(self, "tasks"):
+            for task in self.tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*self.tasks, return_exceptions=True)
         self.logger.info("All tasks cleaned up.")
 
-        if self.db_connection:
+        if hasattr(self, "db_connection") and self.db_connection:
             await self.db_connection.close()
             self.logger.info("Connection closed.")
 
