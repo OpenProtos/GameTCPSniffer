@@ -13,4 +13,5 @@ textual
 pyinstrument
 pyyaml
 types-PyYAML
+Rich
 

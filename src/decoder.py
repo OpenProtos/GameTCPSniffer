@@ -22,23 +22,34 @@ from scapy.all import Packet
 from google.protobuf.any_pb2 import Any
 from google.protobuf.json_format import MessageToJson
 
-from src.utils import ByteArrayRepr, GameProtocolConfig, Message, TCP_Message, ConfigItem
-from src.utils_display import get_tcp_display, print_proto_name, print_varint 
+from src.utils import (
+    ByteArrayRepr,
+    GameProtocolConfig,
+    Message,
+    TCP_Message,
+    ConfigItem,
+)
+from src.utils_display import get_tcp_display, print_proto_name, print_varint
 from src.serialization import serialize_protobuf_message
 from src.profiling import AsyncProfiler
 
 MAX_TRIES_IMPORT = 100
-BUF_SIZE = 65536 # reading the buffer in chunks of BUF_SIZE to avoid reading all the file in once
+BUF_SIZE = 65536  # reading the buffer in chunks of BUF_SIZE to avoid reading all the file in once
 
 
 def compile_proto(proto_path: Path, proto_name: str) -> None:
     try:
-        result = subprocess.run([
-            'protoc', 
-            f'--proto_path={proto_path}', 
-            '--python_out=.',
-            f'proto\\{proto_name}.proto'
-        ], shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        result = subprocess.run(
+            [
+                "protoc",
+                f"--proto_path={proto_path}",
+                "--python_out=.",
+                f"proto\\{proto_name}.proto",
+            ],
+            shell=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
 
         if result.returncode != 0:
             raise RuntimeError(f"Protoc failed: {result.stderr!r}")
@@ -48,7 +59,7 @@ def compile_proto(proto_path: Path, proto_name: str) -> None:
 
 def hash_proto(proto_path: Path) -> str:
     sha256 = hashlib.sha256()
-    with open(proto_path, 'rb') as f:
+    with open(proto_path, "rb") as f:
         while True:
             data = f.read(BUF_SIZE)
             if not data:
@@ -63,7 +74,6 @@ def import_proto(
     proto_name: str,
     printer: Callable[[str], None],
 ) -> Tuple[ModuleType, str]:
-
     for _ in range(MAX_TRIES_IMPORT):
         try:
             printer(f"Trying loading {proto_name}_pb2...")
@@ -76,18 +86,24 @@ def import_proto(
             if match:
                 proto_file = match.group(1)
 
-                printer(f"No compiled proto file for {proto_file}, trying to compile it...")
+                printer(
+                    f"No compiled proto file for {proto_file}, trying to compile it..."
+                )
                 compile_proto(proto_path, proto_file)
                 printer(f"Compilation for {proto_file} done...")
 
                 continue
 
-            raise ValueError(f"Cant parse error message to automatically compile protobuf files. Error was: {e}")
+            raise ValueError(
+                f"Cant parse error message to automatically compile protobuf files. Error was: {e}"
+            )
 
         except Exception:
             raise
 
-    raise TimeoutError(f"Maximum retry limit reached ({MAX_TRIES_IMPORT} attempts). Import of {proto_name} be completed.")
+    raise TimeoutError(
+        f"Maximum retry limit reached ({MAX_TRIES_IMPORT} attempts). Import of {proto_name} be completed."
+    )
 
 
 def parse_varints_from_hex(bytes_msg: bytes) -> Tuple[int, int, ByteArrayRepr]:
@@ -116,7 +132,11 @@ def parse_varints_from_hex(bytes_msg: bytes) -> Tuple[int, int, ByteArrayRepr]:
 
     bytes_consumed = position - start_pos
 
-    return result, bytes_consumed, ByteArrayRepr.from_bytes(bytes_msg[start_pos:position])
+    return (
+        result,
+        bytes_consumed,
+        ByteArrayRepr.from_bytes(bytes_msg[start_pos:position]),
+    )
 
 
 @define
@@ -136,7 +156,6 @@ class TCPDecoder:
     _verbose: bool = field(init=False)
     display_tcp: Callable[[str, str, Packet, Optional[str]], None] = field(init=False)
 
-
     @classmethod
     def as_decoder(
         cls,
@@ -147,7 +166,6 @@ class TCPDecoder:
         printer_log: Callable[[str], None],
         printer_display: Callable[[str], None],
     ) -> Self:
-
         decoder = cls(queue_cfg, queue_msg, queue_com, printer_log, printer_display)
         decoder._magic_bytes = config.magic_bytes
         decoder._display = config.display
@@ -160,7 +178,6 @@ class TCPDecoder:
 
         return decoder
 
-
     @classmethod
     def get_decoder(
         cls,
@@ -171,12 +188,12 @@ class TCPDecoder:
         printer_log: Callable[[str], None],
         printer_display: Callable[[str], None],
     ) -> Callable[[], Coroutine[None, None, None]]:
-
-        decoderContainer = cls.as_decoder(queue_cfg, queue_msg, queue_com, config, printer_log, printer_display)
+        decoderContainer = cls.as_decoder(
+            queue_cfg, queue_msg, queue_com, config, printer_log, printer_display
+        )
         profiler = AsyncProfiler(logging.getLogger("tcp_sniffer"))
 
         async def decoder() -> None:
-
             await asyncio.gather(
                 decoderContainer.handle_messages(profiler),
                 decoderContainer.handle_updates(),
@@ -185,13 +202,13 @@ class TCPDecoder:
 
         return decoder
 
-
     async def handle_messages(self, profiler: AsyncProfiler) -> None:
-
         while True:
             try:
                 msg = await asyncio.to_thread(self.queue_msg.get, timeout=1)
-                tcp_msg = await profiler.profile("decoder", self.process_tcp_message, msg)
+                tcp_msg = await profiler.profile(
+                    "decoder", self.process_tcp_message, msg
+                )
                 if tcp_msg is not None:
                     await self.queue_com.put(tcp_msg)
 
@@ -202,9 +219,7 @@ class TCPDecoder:
             except Exception as e:
                 self.printer_log(f"Message handler error: {e}")
 
-
     async def handle_updates(self) -> None:
-
         while True:
             try:
                 key, value = await self.queue_cfg.get()
@@ -215,12 +230,10 @@ class TCPDecoder:
             except Exception as e:
                 self.printer_log(f"Updates handler error: {e}")
 
-
     def process_tcp_message(
         self,
         msg: Message,
     ) -> Optional[TCP_Message]:
-
         payload = bytes(msg.pkt[TCP].payload)
 
         # decode the varint
@@ -229,7 +242,9 @@ class TCPDecoder:
         # detect messages that spawn on multiple packets
         # not handled yet
         if value_varint + bytes_consumed > len(payload):
-            raise ValueError(f"Packet size is {len(payload)} but {value_varint + bytes_consumed} was expected")
+            raise ValueError(
+                f"Packet size is {len(payload)} but {value_varint + bytes_consumed} was expected"
+            )
 
         # if some magic_bytes were given, use them to find the Any protobuf
         if self._magic_bytes:
@@ -237,29 +252,36 @@ class TCPDecoder:
             if self._magic_bytes in payload:
                 magic_number_index = payload.index(self._magic_bytes)
             any_msg = Any()
-            any_msg.ParseFromString(payload[magic_number_index-2:])
+            any_msg.ParseFromString(payload[magic_number_index - 2 :])
         # else print the payload as ascii for exploration purpose
         # and stop here
         else:
-            self.printer_log(payload.decode('ascii', 'replace'))
+            self.printer_log(payload.decode("ascii", "replace"))
             self.printer_log("---")
             return None
 
         # if verbose, print the name of each proto found unless they are blacklist
         # it's an exploration feature
-        if self._verbose and not any(b in any_msg.type_url for b in self._blacklist) and any_msg.type_url != "":
+        if (
+            self._verbose
+            and not any(b in any_msg.type_url for b in self._blacklist)
+            and any_msg.type_url != ""
+        ):
             print_proto_name(self.printer_log, any_msg)
 
         # if the message needs to handle, decode and display it
-        if self._protos != [""] and any((proto_filter:=p) in any_msg.type_url for p in self._protos):
-
+        if self._protos != [""] and any(
+            (proto_filter := p) in any_msg.type_url for p in self._protos
+        ):
             self.display_tcp(*msg.unpack(), None)
             print_varint(self.printer_log, value_varint, bytes_consumed, varint_bytes)
             self.printer_log("---")
             self.printer_log("Decoding...")
 
             # import desired proto file, compile it if needed
-            proto_module, proto_hash = import_proto(self._proto_path, proto_filter, self.printer_log)
+            proto_module, proto_hash = import_proto(
+                self._proto_path, proto_filter, self.printer_log
+            )
             proto_class = getattr(proto_module, proto_filter)
             proto_msg = proto_class()
             # parse it
@@ -284,4 +306,3 @@ class TCPDecoder:
             return tcp_msg
 
         return None
-
