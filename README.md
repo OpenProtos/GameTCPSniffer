@@ -1,6 +1,6 @@
 # TCP Game Protocol Analyzer
 
-A powerful Python-based TUI (Text User Interface) tool for analyzing and reverse-engineering TCP-based game protocols. Built with Textual, this tool provides real-time network monitoring, protobuf message decoding, and interactive analysis capabilities.
+A Python-based TUI (Text User Interface) tool for analyzing and reverse-engineering TCP-based game protocols. Built with Textual, this tool provides real-time network monitoring, protobuf message decoding, and interactive analysis capabilities.
 
 ## Features
 
