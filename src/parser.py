@@ -1,8 +1,10 @@
 import asyncio
 from pathlib import Path
-from typing import Callable, Coroutine, Sequence 
+from typing import Callable, Coroutine, Sequence
 
-from argparse import ArgumentParser, Namespace 
+from argparse import ArgumentParser, Namespace
+
+from attrs import define
 
 from src.utils import ConfigItem, GameProtocolConfig
 
@@ -12,62 +14,61 @@ def tcp_parser() -> ArgumentParser:
         description="TCP Game Protocol Analyzer - Monitor client-server communication patterns"
     )
     parser.add_argument(
-        '-p', '--ports', 
-        nargs='+', 
+        "-p",
+        "--ports",
+        nargs="+",
         type=int,
         default=[5555, 1119, 8080],
-        help="Target server ports to monitor (default: 5555, 1119, 8080)"
+        help="Target server ports to monitor (default: 5555, 1119, 8080)",
     )
     parser.add_argument(
-        '-pr', '--protos',
+        "-pr", "--protos", nargs="*", default=[], help="List of proto packets to filter"
+    )
+    parser.add_argument(
+        "-bl",
+        "--blacklist",
         nargs="*",
         default=[],
-        help="List of proto packets to filter"
+        help="List of proto packets to blacklist",
     )
     parser.add_argument(
-        '-bl', '--blacklist',
-        nargs="*",
-        default=[],
-        help="List of proto packets to blacklist"
-    )
-    parser.add_argument(
-        '-mb', '--magic-bytes', 
+        "-mb",
+        "--magic-bytes",
         type=str,
         default="",
-        help="Magic bytes used to find the Any message in each packets (default: ``)"
+        help="Magic bytes used to find the Any message in each packets (default: ``)",
     )
     parser.add_argument(
-        '--db-path',
-        default="database",
-        help="Database path (default: database)"
+        "--db-path", default="database", help="Database path (default: database)"
     )
     parser.add_argument(
-        '--sc-path',
+        "--sc-path",
         default="database/schema.sql",
-        help="Sql schema file path (default: database/schema.sql)"
+        help="Sql schema file path (default: database/schema.sql)",
     )
     parser.add_argument(
-        '--proto-path',
-        default="proto",
-        help="Protobuf folder path (default: proto)"
+        "--proto-path", default="proto", help="Protobuf folder path (default: proto)"
     )
     parser.add_argument(
-        '-gv', '--game-version',
+        "-gv",
+        "--game-version",
         type=str,
         default="UNKNOWN",
-        help="Version of the game you're sniffing (default: `UNKNOWN`)"
+        help="Version of the game you're sniffing (default: `UNKNOWN`)",
     )
     parser.add_argument(
-        '-d', '--display', 
-        action='store_true', 
+        "-d",
+        "--display",
+        action="store_true",
         default=False,
-        help="Display packet on the terminal (default: False)"
+        help="Display packet on the terminal (default: False)",
     )
     parser.add_argument(
-        '-v', '--verbose', 
-        action='store_true', 
+        "-v",
+        "--verbose",
+        action="store_true",
         default=False,
-        help="Display all protobuf messages found (default: False)"
+        help="Display all protobuf messages found (default: False)",
     )
     return parser
 
@@ -78,17 +79,21 @@ def create_start_config_from_args(arguments: Sequence[str]) -> GameProtocolConfi
 
     # check proto files
     if not Path(args.proto_path).exists():
-        raise ValueError(f"Cannot find the proto folder {args.proto_path}, did you correctly export all proto files ?")
-    
+        raise ValueError(
+            f"Cannot find the proto folder {args.proto_path}, did you correctly export all proto files ?"
+        )
+
     for proto in args.protos:
         if not (Path(args.proto_path) / f"{proto}.proto").exists():
-            raise ValueError(f"Cannot find the proto file {proto}.proto in folder {args.proto_path}.")
+            raise ValueError(
+                f"Cannot find the proto file {proto}.proto in folder {args.proto_path}."
+            )
 
     # compute magic_bytes
     magic_bytes_str = args.magic_bytes
-    if magic_bytes_str.startswith('\\x'): # escaped hex case, with \x prefix
-        magic_bytes = magic_bytes_str.encode().decode('unicode_escape').encode('latin1')
-    else:  
+    if magic_bytes_str.startswith("\\x"):  # escaped hex case, with \x prefix
+        magic_bytes = magic_bytes_str.encode().decode("unicode_escape").encode("latin1")
+    else:
         try:
             # raw hex case, no prefix
             magic_bytes = bytes.fromhex(magic_bytes_str)
@@ -131,99 +136,77 @@ def create_runtime_parser() -> ArgumentParser:
     subparsers.add_parser("clear")
 
     add_proto_parser.add_argument(
-        'names', 
-        nargs="*",
-        default=[],
-        help="Adds proto packets to filter"
+        "names", nargs="*", default=[], help="Adds proto packets to filter"
     )
 
     remove_proto_parser.add_argument(
-        'names', 
-        nargs="*",
-        default=[],
-        help="Removes proto packets to filter"
-
+        "names", nargs="*", default=[], help="Removes proto packets to filter"
     )
 
     add_blacklist_parser.add_argument(
-        'names', 
-        nargs="*",
-        default=[],
-        help="Adds proto packets to blacklist"
-
+        "names", nargs="*", default=[], help="Adds proto packets to blacklist"
     )
 
     remove_blacklist_parser.add_argument(
-        'names', 
-        nargs="*",
-        default=[],
-        help="Removes proto packets to blacklist"
+        "names", nargs="*", default=[], help="Removes proto packets to blacklist"
     )
 
     restart_parser.add_argument(
-        '--previous',
+        "--previous",
         action="store_true",
     )
     restart_parser.add_argument(
-        '--current',
+        "--current",
         action="store_true",
     )
 
     return parser
 
 
+@define
 class CommandProcessor:
-    def __init__(
-        self,
-        printer: Callable[[str], None],
-        clear_handler: Callable[[], None],
-        restart_handler: Callable[[Sequence[str]], Coroutine[None, None, None]],
-        previous_args: Sequence[str],
-        queue: asyncio.Queue[ConfigItem],
-        usage: str,
-    ):
-        self.printer = printer
-        self.clear_handler = clear_handler
-        self.restart_handler = restart_handler
-        self.previous_args = previous_args
-        self.queue = queue
-        self.usage = usage
-
+    printer: Callable[[str], None]
+    clear_handler: Callable[[], None]
+    restart_handler: Callable[[Sequence[str]], Coroutine[None, None, None]]
+    previous_args: Sequence[str]
+    queue: asyncio.Queue[ConfigItem]
+    usage: str
 
     async def process(
         self,
         config: GameProtocolConfig,
         command: Namespace,
-        remainder_args: Sequence[str]
+        remainder_args: Sequence[str],
     ) -> None:
-
         if command.command == "add_proto":
             await config.add_proto(command.names, self.queue)
             self.printer(f"{'Capturing protos':<35}: {config.protos}")
 
-        elif command.command  == "remove_proto":
+        elif command.command == "remove_proto":
             await config.remove_proto(command.names, self.queue)
             self.printer(f"{'Capturing protos':<35}: {config.protos}")
 
-        elif command.command  == "add_blacklist":
+        elif command.command == "add_blacklist":
             await config.add_blacklist(command.names, self.queue)
             self.printer(f"{'Ignoring protos':<35}: {config.blacklist}")
 
-        elif command.command  == "remove_blacklist":
+        elif command.command == "remove_blacklist":
             await config.remove_blacklist(command.names, self.queue)
             self.printer(f"{'Ignoring protos':<35}: {config.blacklist}")
 
-        elif command.command  == "verbose":
+        elif command.command == "verbose":
             await config.toggle_verbose(self.queue)
             self.printer(f"{'Verbose':<35}: {config.verbose}")
 
-        elif command.command  == "show":
-            self.printer(f"{'Capturing protos':<35}: {config.protos}\n{'Ignoring protos':<35}: {config.blacklist}\n{'Verbose':<35}: {config.verbose}")
+        elif command.command == "show":
+            self.printer(
+                f"{'Capturing protos':<35}: {config.protos}\n{'Ignoring protos':<35}: {config.blacklist}\n{'Verbose':<35}: {config.verbose}"
+            )
 
-        elif command.command  == "help":
+        elif command.command == "help":
             self.printer(self.usage)
 
-        elif command.command  == "restart":
+        elif command.command == "restart":
             parser = tcp_parser()
             if command.previous:
                 new_args = self.previous_args
@@ -242,4 +225,3 @@ class CommandProcessor:
 
         elif command.command == "clear":
             self.clear_handler()
-
