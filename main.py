@@ -15,16 +15,15 @@ from src.parser import tcp_parser
 
 
 async def main(args: Sequence[str]) -> None:
-
     history: List[str] = []
-    while True: # to handle restart
-        app = TCPSnifferApp(history)
+    while True:  # to handle restart
+        app = TCPSnifferApp(args, history)
         app_task = asyncio.create_task(app.run_async())
         await asyncio.sleep(0.1)  # create widgets
 
         try:
             # async initialization
-            if not await app.initialize(args):
+            if not await app.initialize():
                 app.logger.info("Failed to initialize app")
                 app_task.cancel()
                 return
@@ -35,13 +34,15 @@ async def main(args: Sequence[str]) -> None:
         except asyncio.CancelledError:
             app.logger.info("Shutting down...")
         except Exception as e:
-            app.logger.info(f"Exception in gather: {e}")
+            app.logger.error(f"{e}")
         finally:
             await app.on_exit()
             if not app._restart_requested:
                 break
             args = app._new_args
             history = app.history
+
+    app.exit()
 
 
 if __name__ == "__main__":
@@ -56,4 +57,3 @@ if __name__ == "__main__":
     # since the app does not return a restored terminal, and I tried, and I tried and I tried to fix it
     # I call it a feature and grant the user with some magic
     print("(ﾉ◕ヮ◕)ﾉ*:･ﾟ✧ Whoosh!")
-

@@ -1,5 +1,6 @@
+from argparse import ArgumentParser
 import asyncio
-from typing import Any, List, Sequence
+from typing import Any, List, Optional, Sequence
 import queue
 import threading
 import logging
@@ -11,7 +12,7 @@ from textual.widgets import Static, Input, RichLog
 from textual.events import Key
 from textual.containers import Vertical, Horizontal
 from textual.suggester import SuggestFromList
-from scapy.all import sniff, Packet
+from scapy.all import sniff, Packet, PacketList
 from rich.text import Text
 
 from src.parser import (
@@ -31,83 +32,84 @@ class TCPSnifferApp(App[None]):
         ("down,j", "history(1)", "Following statement"),
     ]
 
-    def __init__(self, history: List[str] = []) -> None:
+    def __init__(self, arguments: Sequence[str], history: List[str] = []) -> None:
         super().__init__()
+
+        # args related
         self._restart_requested = False
+        self._used_args: Sequence[str] = arguments
         self._new_args: Sequence[str] = []
+
+        # logging
         self.logger = logging.getLogger("tcp_sniffer")
+
+        # sharable history between session
         self.history = history
         self.history_index = len(self.history)
 
-    async def initialize(self, arguments: Sequence[str]) -> bool:
-        self.logger.info("Initializing app...")
-
-        printer = self.add_message
-        printer_display = self.add_display
-        self._used_args = arguments
-        self.config = create_start_config_from_args(arguments)
-        self.runtime_parser = create_runtime_parser()
-        suggestion = []
-        for sub_actions in self.runtime_parser._actions:
-            if sub_actions.choices:
-                suggestion.extend(list(sub_actions.choices.keys()))
-        self.command_input.suggester = SuggestFromList(suggestion)
-
-        self.add_message_and_log(f"{'Monitoring ports':<35}: {self.config.ports}")
-        self.add_message_and_log(
-            f"{'Magic bytes used to decode protos':<35}: {self.config.magic_bytes!r}"
-        )
-        self.add_message_and_log(f"{'Capturing protos':<35}: {self.config.protos}")
-        self.add_message_and_log(f"{'Ignoring protos':<35}: {self.config.blacklist}")
-        self.add_message_and_log("Getting servers...")
-
-        servs = get_game_servers(self.config.ports, printer)
-        if not servs:
-            self.logger.error(
-                f"Script is closing, no servers on port {self.config.ports} were found."
-            )
-            raise RuntimeError(
-                f"Script is closing, no servers on port {self.config.ports} were found."
-            )
-        self.add_message_and_log(f"Starting packet capture for {servs} servers...")
-        self.ip_servs = [ip for (ip, _) in servs]
-
-        async with aiosqlite.connect(self.config.db_path / "tcp.db") as db:
-            async with aiofiles.open(self.config.sc_path, encoding="utf-8") as file:
-                await db.executescript(await file.read())
-            await db.commit()
-
-        # getting the last session id
-        self.db_connection = await aiosqlite.connect(self.config.db_path / "tcp.db")
-        last_session_id = await get_last_session_id(self.db_connection)
+        # list of all ips detected
+        self._ip_servs: List[str] = []
 
         # event to cancel threads
         self.cancel_event = threading.Event()
 
-        # queue for communication between tasks
-        queue_cfg_decoder = asyncio.Queue[ConfigItem](maxsize=100)
-        queue_msg_decoder = queue.Queue[Message](maxsize=100)
-        queue_com_decoder = asyncio.Queue[TCP_Message](maxsize=100)
+        # list of all parallele tasks handled
+        self.tasks: List[asyncio.Task[PacketList | None]] = []
 
+        # connection to a QSLite database
+        self.db_connection: Optional[aiosqlite.Connection] = None
+
+        # queue for communication between tasks
+        self._queue_cfg_decoder = asyncio.Queue[ConfigItem](maxsize=100)
+        self._queue_msg_decoder = queue.Queue[Message](maxsize=100)
+        self._queue_com_decoder = asyncio.Queue[TCP_Message](maxsize=100)
+
+        # storing the configuration of the app
+        self.config = create_start_config_from_args(self._used_args)
+
+        # parser for runtime commands used to modify the configuration
+        self.runtime_parser = create_runtime_parser()
+
+        # abstraction to handle config modification thanks to runtime commands
         self.command_processor = CommandProcessor(
             self.add_result,
             self.clear,
             self.request_restart,
             self._used_args,
-            queue_cfg_decoder,
+            self._queue_cfg_decoder,
             self.runtime_parser.format_usage(),
         )
 
-        # sniffer thread
-        packet_handler = generate_packet_handler(queue_msg_decoder, printer)
+    def get_ips(self) -> List[str]:
+        servs = get_game_servers(self.config.ports, self.add_message)
+        self.add_message_and_log(f"Starting packet capture for {servs} servers...")
+        return [ip for (ip, _) in servs]
+
+    async def connect(self) -> aiosqlite.Connection:
+        async with aiosqlite.connect(self.config.db_path / "tcp.db") as db:
+            async with aiofiles.open(self.config.sc_path, encoding="utf-8") as file:
+                await db.executescript(await file.read())
+            await db.commit()
+
+        self.add_message_and_log(
+            f"Starting connection to {self.config.db_path / 'tcp.db'}..."
+        )
+        return await aiosqlite.connect(self.config.db_path / "tcp.db")
+
+    def create_sniffer_task(self) -> asyncio.Task[PacketList]:
+        # sniffer task
+        packet_handler = generate_packet_handler(
+            self._queue_msg_decoder, self.add_message
+        )
 
         def custom_prn(pkt: Packet) -> None:
-            return packet_handler(pkt, self.ip_servs)
+            return packet_handler(pkt, self._ip_servs)
 
         def custom_stop_filter(_: Any) -> bool:
             return self.cancel_event.is_set()
 
-        sn_task = asyncio.create_task(
+        self.add_message_and_log("Sniffer worker started")
+        return asyncio.create_task(
             asyncio.to_thread(
                 lambda: sniff(
                     filter="tcp",
@@ -118,29 +120,65 @@ class TCPSnifferApp(App[None]):
             )
         )
 
+    def create_decoder_task(self) -> asyncio.Task[None]:
         # decoder task
         de_worker = TCPDecoder.get_decoder(
-            queue_cfg_decoder,
-            queue_msg_decoder,
-            queue_com_decoder,
+            self._queue_cfg_decoder,
+            self._queue_msg_decoder,
+            self._queue_com_decoder,
             self.config,
-            printer,
-            printer_display,
+            self.add_message,
+            self.add_display,
         )
-        de_task = asyncio.create_task(de_worker())
-
         self.add_message_and_log("Decoder worker started")
+        return asyncio.create_task(de_worker())
 
+    def create_database_task(self, last_session_id: int) -> asyncio.Task[None]:
         # database task
-        db_worker = get_database_worker(queue_com_decoder, last_session_id + 1, printer)
-        db_task = asyncio.create_task(db_worker(self.db_connection))
-
+        db_worker = get_database_worker(
+            self._queue_com_decoder, last_session_id + 1, self.add_message
+        )
         self.add_message_and_log("Database worker started")
 
+        return asyncio.create_task(db_worker(self.db_connection))
+
+    async def initialize(self) -> bool:
+        self.logger.info("Initializing app...")
+
+        self.command_input.suggester = SuggestFromList(
+            [
+                choice
+                for sub_actions in self.runtime_parser._actions
+                if sub_actions.choices
+                for choice in list(sub_actions.choices)
+            ]
+        )
+
+        self.add_message_and_log(f"{'Monitoring ports':<35}: {self.config.ports}")
+        self.add_message_and_log(
+            f"{'Magic bytes used to decode protos':<35}: {self.config.magic_bytes!r}"
+        )
+        self.add_message_and_log(f"{'Capturing protos':<35}: {self.config.protos}")
+        self.add_message_and_log(f"{'Ignoring protos':<35}: {self.config.blacklist}")
+        self.add_message_and_log("Getting servers...")
+
+        self._ip_servs = self.get_ips()
+        if not self._ip_servs:
+            self.logger.warning(f"No servers on port {self.config.ports} were found.")
+
+        self.db_connection = await self.connect()
+        if not self.db_connection:
+            self.logger.error(
+                f"Script is closing, no connection on {self.config.db_path}."
+            )
+            return False
+
+        last_session_id = await get_last_session_id(self.db_connection)
+
         self.tasks = [
-            sn_task,
-            de_task,
-            db_task,
+            self.create_sniffer_task(),
+            self.create_decoder_task(),
+            self.create_database_task(last_session_id),
         ]
 
         return True
@@ -238,18 +276,15 @@ class TCPSnifferApp(App[None]):
 
     async def on_exit(self) -> None:
         self.logger.info("Cleaning up...")
+        self.cancel_event.set()
 
-        if hasattr(self, "cancel_event"):
-            self.cancel_event.set()
-
-        if hasattr(self, "tasks"):
-            for task in self.tasks:
-                if not task.done():
-                    task.cancel()
-            await asyncio.gather(*self.tasks, return_exceptions=True)
+        for task in self.tasks:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*self.tasks, return_exceptions=True)
         self.logger.info("All tasks cleaned up.")
 
-        if hasattr(self, "db_connection") and self.db_connection:
+        if self.db_connection:
             await self.db_connection.close()
             self.logger.info("Connection closed.")
 
