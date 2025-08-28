@@ -13,7 +13,7 @@ import queue
 import re
 import subprocess
 from types import ModuleType
-from typing import Callable, Coroutine, List, Optional, Set, Tuple, Self
+from typing import Callable, Coroutine, List, Optional, Tuple, Self
 
 from attrs import define, field
 
@@ -144,8 +144,8 @@ class TCPDecoder:
     queue_cfg: asyncio.Queue[ConfigItem]
     queue_msg: queue.Queue[Message]
     queue_com: asyncio.Queue[TCP_Message]
-    printer_log: Callable[[str], None]
-    printer_display: Callable[[str], None]
+    printer_widget: Callable[[str, str], None]
+    logger: logging.Logger
 
     _magic_bytes: bytes = field(init=False)
     _display: bool = field(init=False)
@@ -163,10 +163,16 @@ class TCPDecoder:
         queue_msg: queue.Queue[Message],
         queue_com: asyncio.Queue[TCP_Message],
         config: GameProtocolConfig,
-        printer_log: Callable[[str], None],
-        printer_display: Callable[[str], None],
+        printer_widget: Callable[[str, str], None],
+        logger: logging.Logger,
     ) -> Self:
-        decoder = cls(queue_cfg, queue_msg, queue_com, printer_log, printer_display)
+        decoder = cls(
+            queue_cfg,
+            queue_msg,
+            queue_com,
+            printer_widget,
+            logger,
+        )
         decoder._magic_bytes = config.magic_bytes
         decoder._display = config.display
         decoder._game_version = config.game_version
@@ -174,7 +180,9 @@ class TCPDecoder:
         decoder._protos = config.protos
         decoder._blacklist = config.blacklist
         decoder._verbose = config.verbose
-        decoder.display_tcp = get_tcp_display(decoder.printer_log, decoder._display)
+        decoder.display_tcp = get_tcp_display(
+            lambda msg: decoder.printer_widget(msg, "log"), decoder._display
+        )
 
         return decoder
 
@@ -185,13 +193,18 @@ class TCPDecoder:
         queue_msg: queue.Queue[Message],
         queue_com: asyncio.Queue[TCP_Message],
         config: GameProtocolConfig,
-        printer_log: Callable[[str], None],
-        printer_display: Callable[[str], None],
+        printer_widget: Callable[[str, str], None],
+        logger: logging.Logger,
     ) -> Callable[[], Coroutine[None, None, None]]:
         decoderContainer = cls.as_decoder(
-            queue_cfg, queue_msg, queue_com, config, printer_log, printer_display
+            queue_cfg,
+            queue_msg,
+            queue_com,
+            config,
+            printer_widget,
+            logger,
         )
-        profiler = AsyncProfiler(logging.getLogger("tcp_sniffer"))
+        profiler = AsyncProfiler(logger)
 
         async def decoder() -> None:
             await asyncio.gather(
@@ -217,7 +230,7 @@ class TCPDecoder:
             except queue.Empty:
                 continue
             except Exception as e:
-                self.printer_log(f"Message handler error: {e}")
+                self.logger.exception(f"Message handler error: {e}")
 
     async def handle_updates(self) -> None:
         while True:
@@ -228,7 +241,7 @@ class TCPDecoder:
             except queue.Empty:
                 continue
             except Exception as e:
-                self.printer_log(f"Updates handler error: {e}")
+                self.logger.exception(f"Update handler error: {e}")
 
     def process_tcp_message(
         self,
@@ -256,8 +269,8 @@ class TCPDecoder:
         # else print the payload as ascii for exploration purpose
         # and stop here
         else:
-            self.printer_log(payload.decode("ascii", "replace"))
-            self.printer_log("---")
+            self.printer_widget(payload.decode("ascii", "replace"), "log")
+            self.printer_widget("---", "log")
             return None
 
         # if verbose, print the name of each proto found unless they are blacklist
@@ -267,28 +280,34 @@ class TCPDecoder:
             and not any(b in any_msg.type_url for b in self._blacklist)
             and any_msg.type_url != ""
         ):
-            print_proto_name(self.printer_log, any_msg)
+            print_proto_name(lambda msg: self.printer_widget(msg, "log"), any_msg)
 
         # if the message needs to handle, decode and display it
         if self._protos != [""] and any(
             (proto_filter := p) in any_msg.type_url for p in self._protos
         ):
             self.display_tcp(*msg.unpack(), None)
-            print_varint(self.printer_log, value_varint, bytes_consumed, varint_bytes)
-            self.printer_log("---")
-            self.printer_log("Decoding...")
+            print_varint(
+                lambda msg: self.printer_widget(msg, "log"),
+                value_varint,
+                bytes_consumed,
+                varint_bytes,
+            )
+            self.printer_widget("---\nDecoding...", "log")
 
             # import desired proto file, compile it if needed
             proto_module, proto_hash = import_proto(
-                self._proto_path, proto_filter, self.printer_log
+                self._proto_path,
+                proto_filter,
+                lambda msg: self.printer_widget(msg, "log"),
             )
             proto_class = getattr(proto_module, proto_filter)
             proto_msg = proto_class()
             # parse it
             proto_msg.ParseFromString(any_msg.value)
-            self.printer_log("---")
-            print_proto_name(self.printer_display, any_msg)
-            self.printer_display(MessageToJson(proto_msg))
+            self.printer_widget("---", "log")
+            print_proto_name(lambda msg: self.printer_widget(msg, "display"), any_msg)
+            self.printer_widget(MessageToJson(proto_msg), "display")
 
             # create an abstraction for communication with other tasks
             tcp_msg = TCP_Message(
@@ -301,7 +320,7 @@ class TCPDecoder:
                 version=self._game_version,
                 hash=proto_hash,
             )
-            self.printer_display("-------")
+            self.printer_widget("-------", "display")
 
             return tcp_msg
 

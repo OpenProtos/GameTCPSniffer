@@ -72,7 +72,7 @@ class TCPSnifferApp(App[None]):
 
         # abstraction to handle config modification thanks to runtime commands
         self.command_processor = CommandProcessor(
-            self.add_result,
+            lambda msg: self.add_text_widget(msg, "result"),
             self.clear,
             self.request_restart,
             self._used_args,
@@ -99,8 +99,11 @@ class TCPSnifferApp(App[None]):
         self.result = Static("")
 
     def get_ips(self) -> List[str]:
-        servs = get_game_servers(self.config.ports, self.add_message)
-        self.add_message_and_log(f"Starting packet capture for {servs} servers...")
+        servs = get_game_servers(
+            self.config.ports,
+            self.logger,
+        )
+        self.add_text_widget(f"Starting packet capture for {servs} servers...", "log")
         return [ip for (ip, _) in servs]
 
     async def connect(self) -> aiosqlite.Connection:
@@ -109,15 +112,16 @@ class TCPSnifferApp(App[None]):
                 await db.executescript(await file.read())
             await db.commit()
 
-        self.add_message_and_log(
-            f"Starting connection to {self.config.db_path / 'tcp.db'}..."
+        self.add_text_widget(
+            f"Starting connection to {self.config.db_path / 'tcp.db'}...", "log"
         )
         return await aiosqlite.connect(self.config.db_path / "tcp.db")
 
     def create_sniffer_task(self) -> asyncio.Task[PacketList]:
         # sniffer task
         packet_handler = generate_packet_handler(
-            self._queue_msg_decoder, self.add_message
+            self._queue_msg_decoder,
+            self.logger,
         )
 
         def custom_prn(pkt: Packet) -> None:
@@ -126,7 +130,7 @@ class TCPSnifferApp(App[None]):
         def custom_stop_filter(_: Any) -> bool:
             return self.cancel_event.is_set()
 
-        self.add_message_and_log("Sniffer worker started")
+        self.add_text_widget("Sniffer worker started", "log")
         return asyncio.create_task(
             asyncio.to_thread(
                 lambda: sniff(
@@ -145,30 +149,34 @@ class TCPSnifferApp(App[None]):
             self._queue_msg_decoder,
             self._queue_com_decoder,
             self.config,
-            self.add_message,
-            self.add_display,
+            self.add_text_widget,
+            self.logger,
         )
-        self.add_message_and_log("Decoder worker started")
+        self.add_text_widget("Decoder worker started", "log")
         return asyncio.create_task(de_worker())
 
     def create_database_task(self, last_session_id: int) -> asyncio.Task[None]:
         # database task
         db_worker = get_database_worker(
-            self._queue_com_decoder, last_session_id + 1, self.add_message
+            self._queue_com_decoder,
+            last_session_id + 1,
+            lambda msg: self.add_text_widget(msg, "log"),
+            self.logger,
         )
-        self.add_message_and_log("Database worker started")
+        self.add_text_widget("Database worker started")
 
         return asyncio.create_task(db_worker(self.db_connection))
 
     async def initialize(self) -> bool:
         self.logger.info("Initializing app...")
-        self.add_message_and_log(f"{'Monitoring ports':<35}: {self.config.ports}")
-        self.add_message_and_log(
-            f"{'Magic bytes used to decode protos':<35}: {self.config.magic_bytes!r}"
+        self.add_text_widget(
+            f"{'Monitoring ports':<35}: {self.config.ports}\n\
+{'Magic bytes used to decode protos':<35}: {self.config.magic_bytes!r}\n\
+{'Capturing protos':<35}: {self.config.protos}\n\
+{'Ignoring protos':<35}: {self.config.blacklist}\n\
+Getting servers...",
+            "log",
         )
-        self.add_message_and_log(f"{'Capturing protos':<35}: {self.config.protos}")
-        self.add_message_and_log(f"{'Ignoring protos':<35}: {self.config.blacklist}")
-        self.add_message_and_log("Getting servers...")
 
         self._ip_servs = self.get_ips()
         if not self._ip_servs:
@@ -227,7 +235,7 @@ class TCPSnifferApp(App[None]):
             self.history_index = len(self.history)
 
         except Exception as e:
-            self.add_result(f"Invalid command: {e}")
+            self.add_text_widget(f"Invalid command: {e}", "result")
             self.logger.error(f"{e}")
         except SystemExit as e:
             if e.code != 0:
@@ -246,21 +254,16 @@ class TCPSnifferApp(App[None]):
             self.command_input.insert(self.history[self.history_index], 0)
             self.command_input.action_end()
 
-    def add_message_and_log(self, message: str) -> None:
-        self.add_message(message)
-        self.logger.info(message)
-
-    def add_message(self, message: str) -> None:
-        self.packet_log.write(Text.from_ansi(message))
-
-    def add_display(self, message: str) -> None:
-        self.packet_display.write(Text.from_ansi(message))
-
-    def add_result(self, result: str) -> None:
-        self.result.update(result)
-
-    def on_exception(self, exception: Exception) -> None:
-        self.add_message(f"App error: {exception}")
+    def add_text_widget(self, message: str, widget: str = "log") -> None:
+        if widget == "log":
+            self.packet_log.write(Text.from_ansi(message))
+            self.logger.info(message)
+        elif widget == "display":
+            self.packet_display.write(Text.from_ansi(message))
+        elif widget == "result":
+            self.result.update(message)
+        else:
+            raise ValueError(f"Invalid widget {widget} called")
 
     async def request_restart(self, new_args: Sequence[str]) -> None:
         self._restart_requested = True
