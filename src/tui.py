@@ -80,6 +80,24 @@ class TCPSnifferApp(App[None]):
             self.runtime_parser.format_usage(),
         )
 
+        # widgets
+        self.log_area = Horizontal()
+        self.packet_display = RichLog()
+        self.packet_log = RichLog()
+        self.command_area = Vertical()
+        self.command_input = Input(
+            placeholder="type help for more information ...",
+            suggester=SuggestFromList(
+                [
+                    choice
+                    for sub_actions in self.runtime_parser._actions
+                    if sub_actions.choices
+                    for choice in list(sub_actions.choices)
+                ]
+            ),
+        )
+        self.result = Static("")
+
     def get_ips(self) -> List[str]:
         servs = get_game_servers(self.config.ports, self.add_message)
         self.add_message_and_log(f"Starting packet capture for {servs} servers...")
@@ -144,16 +162,6 @@ class TCPSnifferApp(App[None]):
 
     async def initialize(self) -> bool:
         self.logger.info("Initializing app...")
-
-        self.command_input.suggester = SuggestFromList(
-            [
-                choice
-                for sub_actions in self.runtime_parser._actions
-                if sub_actions.choices
-                for choice in list(sub_actions.choices)
-            ]
-        )
-
         self.add_message_and_log(f"{'Monitoring ports':<35}: {self.config.ports}")
         self.add_message_and_log(
             f"{'Magic bytes used to decode protos':<35}: {self.config.magic_bytes!r}"
@@ -185,19 +193,11 @@ class TCPSnifferApp(App[None]):
 
     def compose(self) -> ComposeResult:
         with Vertical():
-            self.log_area = Horizontal()
             with self.log_area:
-                self.packet_log = RichLog()
-                self.packet_display = RichLog()
                 yield self.packet_log
                 yield self.packet_display
 
-            self.command_area = Vertical()
             with self.command_area:
-                self.result = Static("")
-                self.command_input = Input(
-                    placeholder="type help for more information ..."
-                )
                 yield self.result
                 yield self.command_input
 
